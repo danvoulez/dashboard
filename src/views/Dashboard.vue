@@ -133,42 +133,11 @@
           </div>
         </div>
 
-        <!-- Task Panel (Right Sidebar) -->
-        <aside class="task-panel">
-          <div class="panel-header">
-            <h3>Tasks</h3>
-            <button @click="showAddTask = true" class="btn-primary btn-sm">+ Add</button>
-          </div>
-
-          <div class="task-panel-content">
-            <div v-if="taskStore.sortedTasks.length === 0" class="empty-state">
-              <p class="text-secondary">No tasks yet</p>
-              <button @click="showAddTask = true" class="btn-primary btn-sm">Create First Task</button>
-            </div>
-
-            <div v-else class="task-list">
-              <div
-                v-for="task in taskStore.sortedTasks.filter(t => t.status !== 'done').slice(0, 10)"
-                :key="task.id"
-                class="task-item compact"
-              >
-                <div class="task-info">
-                  <h4 class="text-sm">{{ task.title }}</h4>
-                  <div class="task-tags">
-                    <span v-for="tag in task.tags" :key="tag" class="badge badge-sm">
-                      {{ tag }}
-                    </span>
-                  </div>
-                </div>
-                <span class="priority-indicator" :style="{ opacity: task.priority / 100 }">
-                  {{ task.priority }}
-                </span>
-              </div>
-            </div>
-          </div>
-        </aside>
       </div>
     </main>
+
+    <!-- New Task Panel with Urgency System -->
+    <TaskPanel />
 
     <!-- Add Task Modal (simplified) -->
     <div v-if="showAddTask" class="modal-overlay" @click.self="showAddTask = false">
@@ -199,6 +168,7 @@ import { useDashboardStore } from '@/stores/dashboard'
 import { useTaskStore } from '@/stores/tasks'
 import { useAuthStore } from '@/stores/auth'
 import { formatDistanceToNow } from 'date-fns'
+import TaskPanel from '@/components/TaskPanel.vue'
 
 const router = useRouter()
 const dashboardStore = useDashboardStore()
@@ -387,6 +357,7 @@ async function handleLogout() {
   flex: 1;
   overflow-y: auto;
   padding: var(--spacing-lg);
+  margin-right: 360px; /* Make space for TaskPanel */
 }
 
 /* Dashboard Summary */
@@ -412,29 +383,7 @@ async function handleLogout() {
   margin: var(--spacing-md) 0;
 }
 
-/* Task Panel */
-.task-panel {
-  width: 350px;
-  background-color: var(--bg-secondary);
-  border-left: 1px solid var(--border-color);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--spacing-lg);
-  border-bottom: 1px solid var(--border-color);
-}
-
-.task-panel-content {
-  flex: 1;
-  overflow-y: auto;
-  padding: var(--spacing-md);
-}
+/* Task Panel is now in TaskPanel.vue component */
 
 /* Task List */
 .task-list {
