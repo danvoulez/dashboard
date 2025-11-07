@@ -23,22 +23,47 @@ export interface CreateSpanOptions {
 export class SpanBuilder {
   private span: Span
 
-  constructor(options: CreateSpanOptions) {
+  constructor(options?: CreateSpanOptions) {
     const authStore = useAuthStore()
 
     this.span = {
       id: uuidv4(),
-      traceId: options.traceId || uuidv4(),
-      parentSpanId: options.parentSpanId,
-      name: options.name,
-      kind: options.kind || 'internal',
+      traceId: options?.traceId || uuidv4(),
+      parentSpanId: options?.parentSpanId,
+      name: options?.name || 'unnamed',
+      kind: options?.kind || 'internal',
       startTime: new Date().toISOString(),
       status: 'pending',
-      attributes: options.attributes || {},
+      attributes: options?.attributes || {},
       events: [],
       hash: '',
       userId: authStore.user?.id || 'anonymous'
     }
+  }
+
+  setName(name: string): this {
+    this.span.name = name
+    return this
+  }
+
+  setKind(kind: Span['kind']): this {
+    this.span.kind = kind
+    return this
+  }
+
+  setUserId(userId: string): this {
+    this.span.userId = userId
+    return this
+  }
+
+  setParentSpanId(parentSpanId: string): this {
+    this.span.parentSpanId = parentSpanId
+    return this
+  }
+
+  setStatus(status: 'ok' | 'error' | 'pending'): this {
+    this.span.status = status
+    return this
   }
 
   addEvent(name: string, attributes?: Record<string, any>): this {
@@ -60,7 +85,43 @@ export class SpanBuilder {
     return this
   }
 
-  async end(status: 'ok' | 'error' = 'ok', error?: string): Promise<Span> {
+  build(): Span {
+    return { ...this.span }
+  }
+
+  end(status?: 'ok' | 'error' | 'pending', error?: string): void {
+    this.span.endTime = new Date().toISOString()
+
+    if (status) {
+      this.span.status = status
+    }
+
+    if (error) {
+      this.span.attributes.error = error
+    }
+
+    // Compute hash synchronously
+    const spanData = JSON.stringify({
+      id: this.span.id,
+      traceId: this.span.traceId,
+      name: this.span.name,
+      startTime: this.span.startTime,
+      endTime: this.span.endTime,
+      attributes: this.span.attributes,
+      events: this.span.events
+    })
+
+    // Simple synchronous hash
+    let hash = 0
+    for (let i = 0; i < spanData.length; i++) {
+      const char = spanData.charCodeAt(i)
+      hash = ((hash << 5) - hash) + char
+      hash = hash & hash
+    }
+    this.span.hash = hash.toString(16)
+  }
+
+  async endAsync(status: 'ok' | 'error' = 'ok', error?: string): Promise<Span> {
     this.span.endTime = new Date().toISOString()
     this.span.status = status
 

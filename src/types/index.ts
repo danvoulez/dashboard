@@ -19,7 +19,7 @@ export interface AuthSession {
 
 // Task Management
 export type TaskStatus = 'pending' | 'in_progress' | 'done'
-export type TaskOrigin = 'plugin' | 'upload' | 'span' | 'manual' | 'webhook' | 'llm' | 'cron' | 'gdrive'
+export type TaskOrigin = 'plugin' | 'upload' | 'span' | 'manual' | 'webhook' | 'llm' | 'cron' | 'gdrive' | 'policy' | 'sensor'
 
 export interface Task {
   id: string
@@ -122,6 +122,29 @@ export interface LLMConfig {
   provider: LLMProvider
   apiKey?: string
   endpoint?: string
+  model: string
+}
+
+export interface LLMMessage {
+  role: 'system' | 'user' | 'assistant'
+  content: string
+}
+
+export interface LLMCallOptions {
+  messages: LLMMessage[]
+  temperature?: number
+  maxTokens?: number
+  responseFormat?: 'json' | 'text'
+  schema?: any
+}
+
+export interface LLMCallResult {
+  content: string
+  usage?: {
+    promptTokens: number
+    completionTokens: number
+    totalTokens: number
+  }
   model: string
 }
 

@@ -70,7 +70,7 @@ export class TaskSensor {
     }
 
     // Create tracking span
-    const sensorSpan = new SpanBuilder()
+    const sensorSpanBuilder = new SpanBuilder()
       .setName('task_sensor.process_span')
       .setKind('internal')
       .setUserId(span.userId)
@@ -80,13 +80,12 @@ export class TaskSensor {
         sensorType: 'task_sensor',
         action: 'create_task'
       })
-      .build()
 
     try {
       // Convert span to task
       const task = taskFromSpan(span)
 
-      sensorSpan.addEvent('task_created', {
+      sensorSpanBuilder.addEvent('task_created', {
         taskId: task.id,
         title: task.title,
         urgency: task.urgency,
@@ -109,20 +108,20 @@ export class TaskSensor {
         await this.notifyUser(task, 'high_urgency')
       }
 
-      sensorSpan.setStatus('ok')
-      sensorSpan.end()
+      sensorSpanBuilder.setStatus('ok')
+      sensorSpanBuilder.end()
 
       // Save span to DB
-      await db.spans.add(sensorSpan)
+      await db.spans.add(sensorSpanBuilder.getSpan())
 
       return task
     } catch (error) {
-      sensorSpan.setStatus('error')
-      sensorSpan.addEvent('error', {
+      sensorSpanBuilder.setStatus('error')
+      sensorSpanBuilder.addEvent('error', {
         error: error instanceof Error ? error.message : String(error)
       })
-      sensorSpan.end()
-      await db.spans.add(sensorSpan)
+      sensorSpanBuilder.end()
+      await db.spans.add(sensorSpanBuilder.getSpan())
 
       console.error('[TaskSensor] Error processing span:', error)
       return null
@@ -153,14 +152,13 @@ export class TaskSensor {
       return
     }
 
-    const span = new SpanBuilder()
+    const spanBuilder = new SpanBuilder()
       .setName('task_sensor.recalculate_urgencies')
       .setKind('internal')
       .setAttributes({
         sensorType: 'task_sensor',
         action: 'recalculate_urgencies'
       })
-      .build()
 
     try {
       const tasks = taskStore.tasks as Task[]
@@ -177,22 +175,22 @@ export class TaskSensor {
         }
       }
 
-      span.addEvent('urgencies_recalculated', {
+      spanBuilder.addEvent('urgencies_recalculated', {
         totalTasks: tasks.length,
         updated
       })
 
-      span.setStatus('ok')
+      spanBuilder.setStatus('ok')
       console.log(`[TaskSensor] Recalculated urgencies for ${updated}/${tasks.length} tasks`)
     } catch (error) {
-      span.setStatus('error')
-      span.addEvent('error', {
+      spanBuilder.setStatus('error')
+      spanBuilder.addEvent('error', {
         error: error instanceof Error ? error.message : String(error)
       })
       console.error('[TaskSensor] Error recalculating urgencies:', error)
     } finally {
-      span.end()
-      await db.spans.add(span)
+      spanBuilder.end()
+      await db.spans.add(spanBuilder.getSpan())
     }
   }
 
