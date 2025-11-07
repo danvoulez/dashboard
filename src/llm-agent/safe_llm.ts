@@ -7,15 +7,26 @@ import { getLLMSecurity } from '@/security/llm_security'
 import { callLLM, createLLMClient } from './client'
 import type { LLMConfig, LLMMessage, LLMCallOptions, LLMCallResult } from '@/types'
 
-export interface SafeLLMOptions extends LLMCallOptions {
+export interface SafeLLMOptions {
+  messages: LLMMessage[]
+  temperature?: number
+  maxTokens?: number
+  responseFormat?: 'json' | 'text'
+  schema?: any
   tenantId?: string
   enableCache?: boolean
   enableFallback?: boolean
-  schema?: any
   maxRetries?: number
 }
 
-export interface SafeLLMResult extends LLMCallResult {
+export interface SafeLLMResult {
+  content: string
+  usage?: {
+    promptTokens: number
+    completionTokens: number
+    totalTokens: number
+  }
+  model: string
   cached?: boolean
   cacheAge?: number
   promptHash?: string

@@ -43,12 +43,12 @@ interface RadarDB extends DBSchema {
   }
 }
 
-let db: IDBPDatabase<RadarDB> | null = null
+let dbInstance: IDBPDatabase<RadarDB> | null = null
 
 export async function initDB(): Promise<IDBPDatabase<RadarDB>> {
-  if (db) return db
+  if (dbInstance) return dbInstance
 
-  db = await openDB<RadarDB>('radar-dashboard', 2, {
+  dbInstance = await openDB<RadarDB>('radar-dashboard', 2, {
     upgrade(db, oldVersion) {
       // Tasks
       if (!db.objectStoreNames.contains('tasks')) {
@@ -105,14 +105,14 @@ export async function initDB(): Promise<IDBPDatabase<RadarDB>> {
     }
   })
 
-  return db
+  return dbInstance
 }
 
 export async function getDB(): Promise<IDBPDatabase<RadarDB>> {
-  if (!db) {
+  if (!dbInstance) {
     return await initDB()
   }
-  return db
+  return dbInstance
 }
 
 // Task operations
@@ -219,4 +219,38 @@ export async function getActiveFocusSession(): Promise<FocusSession | undefined>
   const database = await getDB()
   const sessions = await database.getAll('focusSessions')
   return sessions.find(s => !s.endTime)
+}
+
+// Export db object for direct access (for compatibility)
+export const db = {
+  spans: {
+    add: saveSpan,
+    getAll: getSpans,
+    getByTraceId: getSpansByTraceId
+  },
+  tasks: {
+    getAll: getTasks,
+    saveAll: saveTasks,
+    getByStatus: getTasksByStatus
+  },
+  policies: {
+    getAll: getPolicies,
+    saveAll: savePolicies,
+    getEnabled: getEnabledPolicies
+  },
+  files: {
+    save: saveFile,
+    get: getFile,
+    getMetadata: getFileMetadata,
+    getAllMetadata: getAllFileMetadata
+  },
+  timeline: {
+    save: saveTimelineEntry,
+    getAll: getTimelineEntries
+  },
+  focusSessions: {
+    save: saveFocusSession,
+    getAll: getFocusSessions,
+    getActive: getActiveFocusSession
+  }
 }

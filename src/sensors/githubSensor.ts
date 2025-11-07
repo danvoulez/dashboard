@@ -104,7 +104,7 @@ export class GitHubSensor {
    * Fetch issues from GitHub API
    */
   private async fetchIssues(userId: string): Promise<Span[]> {
-    const span = new SpanBuilder()
+    const spanBuilder = new SpanBuilder()
       .setName('github_sensor.fetch_issues')
       .setKind('client')
       .setUserId(userId)
@@ -113,7 +113,6 @@ export class GitHubSensor {
         source: 'github',
         repositories: this.config.repositories
       })
-      .build()
 
     try {
       const spans: Span[] = []
@@ -123,7 +122,7 @@ export class GitHubSensor {
         spans.push(...issues)
       }
 
-      span.addEvent('issues_fetched', {
+      spanBuilder.addEvent('issues_fetched', {
         count: spans.length
       })
 
@@ -132,21 +131,21 @@ export class GitHubSensor {
         await db.spans.add(issueSpan)
       }
 
-      span.setStatus('ok')
+      spanBuilder.setStatus('ok')
       this.lastFetchTime = new Date()
       console.log(`[GitHubSensor] Processed ${spans.length} issues`)
 
       return spans
     } catch (error) {
-      span.setStatus('error')
-      span.addEvent('error', {
+      spanBuilder.setStatus('error')
+      spanBuilder.addEvent('error', {
         error: error instanceof Error ? error.message : String(error)
       })
       console.error('[GitHubSensor] Error:', error)
       return []
     } finally {
-      span.end()
-      await db.spans.add(span)
+      spanBuilder.end()
+      await db.spans.add(spanBuilder.getSpan())
     }
   }
 

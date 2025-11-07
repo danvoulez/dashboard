@@ -109,7 +109,7 @@ export class CalendarSensor {
    * Fetch calendar events
    */
   private async fetchEvents(userId: string): Promise<Span[]> {
-    const span = new SpanBuilder()
+    const spanBuilder = new SpanBuilder()
       .setName('calendar_sensor.fetch_events')
       .setKind('client')
       .setUserId(userId)
@@ -118,14 +118,13 @@ export class CalendarSensor {
         source: 'calendar',
         lookAheadDays: this.config.lookAheadDays
       })
-      .build()
 
     try {
       // TODO: Implement actual calendar API integration (Google Calendar, Outlook, etc.)
       // For now, simulate event fetching
       const events = await this.simulateFetchEvents()
 
-      span.addEvent('events_fetched', {
+      spanBuilder.addEvent('events_fetched', {
         count: events.length
       })
 
@@ -145,24 +144,24 @@ export class CalendarSensor {
         }
       }
 
-      span.addEvent('events_processed', {
+      spanBuilder.addEvent('events_processed', {
         count: spans.length
       })
 
-      span.setStatus('ok')
+      spanBuilder.setStatus('ok')
       console.log(`[CalendarSensor] Processed ${spans.length} events`)
 
       return spans
     } catch (error) {
-      span.setStatus('error')
-      span.addEvent('error', {
+      spanBuilder.setStatus('error')
+      spanBuilder.addEvent('error', {
         error: error instanceof Error ? error.message : String(error)
       })
       console.error('[CalendarSensor] Error:', error)
       return []
     } finally {
-      span.end()
-      await db.spans.add(span)
+      spanBuilder.end()
+      await db.spans.add(spanBuilder.getSpan())
     }
   }
 
@@ -189,7 +188,7 @@ export class CalendarSensor {
       tags.push('action-required')
     }
 
-    const span = new SpanBuilder()
+    const spanBuilder = new SpanBuilder()
       .setName('calendar.event_upcoming')
       .setKind('consumer')
       .setUserId(userId)
@@ -210,13 +209,11 @@ export class CalendarSensor {
         dueDate: event.start.dateTime,
         minutesUntil,
         urgencyLevel,
-        critical: urgencyLevel === 'immediate'
+        critical: urgencyLevel === 'immediate',
+        tags
       })
-      .build()
 
-    span.attributes.tags = tags
-
-    return span
+    return spanBuilder.build()
   }
 
   /**

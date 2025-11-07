@@ -71,21 +71,7 @@ export class LLMSecurity {
   }
 
   /**
-   * Compute SHA-256 hash of messages
-   */
-  async computePromptHash(messages: LLMMessage[]): Promise<string> {
-    const promptString = JSON.stringify(messages.map(m => ({ role: m.role, content: m.content })))
-    const encoder = new TextEncoder()
-    const data = encoder.encode(promptString)
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data)
-
-    return Array.from(new Uint8Array(hashBuffer))
-      .map(b => b.toString(16).padStart(2, '0'))
-      .join('')
-  }
-
-  /**
-   * Synchronous hash for quick cache lookups
+   * Compute fast hash for cache lookups (synchronous)
    */
   computePromptHash(messages: LLMMessage[]): string {
     const promptString = JSON.stringify(messages.map(m => ({ role: m.role, content: m.content })))

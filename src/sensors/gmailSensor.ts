@@ -94,7 +94,7 @@ export class GmailSensor {
    * Fetch emails from Gmail API
    */
   private async fetchEmails(userId: string): Promise<Span[]> {
-    const span = new SpanBuilder()
+    const spanBuilder = new SpanBuilder()
       .setName('gmail_sensor.fetch_emails')
       .setKind('client')
       .setUserId(userId)
@@ -102,14 +102,13 @@ export class GmailSensor {
         sensorId: this.sensor.id,
         source: 'gmail'
       })
-      .build()
 
     try {
       // TODO: Implement actual Gmail API integration
       // For now, simulate email fetching
       const emails = await this.simulateFetchEmails()
 
-      span.addEvent('emails_fetched', {
+      spanBuilder.addEvent('emails_fetched', {
         count: emails.length
       })
 
@@ -123,24 +122,24 @@ export class GmailSensor {
         }
       }
 
-      span.addEvent('emails_processed', {
+      spanBuilder.addEvent('emails_processed', {
         count: spans.length
       })
 
-      span.setStatus('ok')
+      spanBuilder.setStatus('ok')
       console.log(`[GmailSensor] Processed ${spans.length} emails`)
 
       return spans
     } catch (error) {
-      span.setStatus('error')
-      span.addEvent('error', {
+      spanBuilder.setStatus('error')
+      spanBuilder.addEvent('error', {
         error: error instanceof Error ? error.message : String(error)
       })
       console.error('[GmailSensor] Error:', error)
       return []
     } finally {
-      span.end()
-      await db.spans.add(span)
+      spanBuilder.end()
+      await db.spans.add(spanBuilder.getSpan())
     }
   }
 

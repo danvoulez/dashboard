@@ -264,7 +264,7 @@ export class ObserverBot {
               },
               {
                 role: 'user',
-                content: `Create a task for this span:\nName: ${span.name}\nStatus: ${span.status}\nError: ${span.error || 'none'}\nAttributes: ${JSON.stringify(span.attributes)}`
+                content: `Create a task for this span:\nName: ${span.name}\nStatus: ${span.status}\nError: ${span.attributes.error || 'none'}\nAttributes: ${JSON.stringify(span.attributes)}`
               }
             ],
             responseFormat: 'json',
