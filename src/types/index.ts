@@ -29,10 +29,16 @@ export interface Task {
   origin: TaskOrigin
   status: TaskStatus
   assignedTo?: string
+  userId: string // Required: task owner
+  source?: string // Sensor ID that created the task
   priority: number // 0-100, computed by formula
+  urgency: number // 0-100, computed by urgency policy
   deadline?: string // ISO timestamp
+  dueDate?: string // Alias for deadline (ISO timestamp)
   spanId?: string
   metadata?: Record<string, any>
+  resolved: boolean // Quick check for task completion
+  critical: boolean // Emergency flag (🔥/error tags)
   createdAt: string
   updatedAt: string
 }
@@ -41,6 +47,27 @@ export interface TaskPriorityFactors {
   weight: number
   daysToDeadline: number
   daysInactive: number
+}
+
+// Task System - Urgency Policy
+export interface UrgencyRule {
+  condition: (task: Task) => boolean
+  urgency: number
+  description: string
+}
+
+export interface UrgencyPolicyResult {
+  urgency: number
+  matchedRule: string
+  critical: boolean
+}
+
+// Task creation from Span
+export interface TaskFromSpanConfig {
+  inferTitle: boolean
+  detectCritical: boolean
+  extractDueDate: boolean
+  preserveTrace: boolean
 }
 
 // Span Protocol (LogLine)
@@ -120,6 +147,9 @@ export type LLMModule =
   | 'plan_next_steps'
   | 'explain_span'
   | 'generate_policy'
+  | 'task_summarizer'
+  | 'urgency_analyzer'
+  | 'task_editor'
 
 // Policy & Automation
 export interface Policy {

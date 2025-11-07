@@ -14,6 +14,8 @@ import { useAuthStore } from '@/stores/auth'
 import { initDB } from '@/utils/db'
 import { startObserverBot, stopObserverBot } from '@/execution/observer_bot'
 import { getPolicyAgent } from '@/execution/policy_agent'
+import { initTaskSensor } from '@/sensors/taskSensor'
+import { initSyncManager } from '@/utils/syncManager'
 
 const dashboardStore = useDashboardStore()
 const taskStore = useTaskStore()
@@ -43,10 +45,32 @@ onMounted(async () => {
     startObserverBot(10000) // Check every 10 seconds
   }
 
-  // Update task priorities daily
+  // Initialize Task Sensor for span → task transformation
+  const taskSensor = initTaskSensor({
+    enabled: true,
+    autoCreateTasks: true,
+    autoUpdateUrgency: true,
+    notifyOnCritical: true
+  })
+  console.log('[App] Task Sensor initialized')
+
+  // Initialize Sync Manager for offline support
+  await initSyncManager({
+    autoSync: true,
+    syncIntervalSeconds: 30
+  })
+  console.log('[App] Sync Manager initialized')
+
+  // Update task priorities and urgencies daily
   setInterval(async () => {
     await taskStore.updateAllPriorities()
+    await taskStore.autoReorder() // Recalculate urgencies
   }, 24 * 60 * 60 * 1000) // Every 24 hours
+
+  // Auto-recalculate urgencies every 5 minutes
+  setInterval(async () => {
+    await taskStore.autoReorder()
+  }, 5 * 60 * 1000) // Every 5 minutes
 
   // Apply dark mode if enabled
   if (dashboardStore.darkMode) {
