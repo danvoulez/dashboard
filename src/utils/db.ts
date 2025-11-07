@@ -1,5 +1,5 @@
 import { openDB, DBSchema, IDBPDatabase } from 'idb'
-import type { Task, Span, FileStorage, FileMetadata, Policy, TimelineEntry, FocusSession } from '@/types'
+import type { Task, Span, FileStorage, FileMetadata, Policy, TimelineEntry, FocusSession, ErrorRecord } from '@/types'
 
 interface RadarDB extends DBSchema {
   tasks: {
@@ -36,6 +36,11 @@ interface RadarDB extends DBSchema {
     value: FocusSession
     indexes: { 'by-taskId': string }
   }
+  errors: {
+    key: string
+    value: ErrorRecord
+    indexes: { 'by-status': string; 'by-origin': string; 'by-traceId': string }
+  }
 }
 
 let db: IDBPDatabase<RadarDB> | null = null
@@ -43,38 +48,60 @@ let db: IDBPDatabase<RadarDB> | null = null
 export async function initDB(): Promise<IDBPDatabase<RadarDB>> {
   if (db) return db
 
-  db = await openDB<RadarDB>('radar-dashboard', 1, {
-    upgrade(db) {
+  db = await openDB<RadarDB>('radar-dashboard', 2, {
+    upgrade(db, oldVersion) {
       // Tasks
-      const taskStore = db.createObjectStore('tasks', { keyPath: 'id' })
-      taskStore.createIndex('by-status', 'status')
-      taskStore.createIndex('by-assignedTo', 'assignedTo')
-      taskStore.createIndex('by-priority', 'priority')
+      if (!db.objectStoreNames.contains('tasks')) {
+        const taskStore = db.createObjectStore('tasks', { keyPath: 'id' })
+        taskStore.createIndex('by-status', 'status')
+        taskStore.createIndex('by-assignedTo', 'assignedTo')
+        taskStore.createIndex('by-priority', 'priority')
+      }
 
       // Spans
-      const spanStore = db.createObjectStore('spans', { keyPath: 'id' })
-      spanStore.createIndex('by-traceId', 'traceId')
-      spanStore.createIndex('by-userId', 'userId')
+      if (!db.objectStoreNames.contains('spans')) {
+        const spanStore = db.createObjectStore('spans', { keyPath: 'id' })
+        spanStore.createIndex('by-traceId', 'traceId')
+        spanStore.createIndex('by-userId', 'userId')
+      }
 
       // Files
-      db.createObjectStore('files', { keyPath: 'id' })
+      if (!db.objectStoreNames.contains('files')) {
+        db.createObjectStore('files', { keyPath: 'id' })
+      }
 
       // File Metadata
-      const fileMetadataStore = db.createObjectStore('fileMetadata', { keyPath: 'id' })
-      fileMetadataStore.createIndex('by-taskId', 'taskId')
+      if (!db.objectStoreNames.contains('fileMetadata')) {
+        const fileMetadataStore = db.createObjectStore('fileMetadata', { keyPath: 'id' })
+        fileMetadataStore.createIndex('by-taskId', 'taskId')
+      }
 
       // Policies
-      const policyStore = db.createObjectStore('policies', { keyPath: 'id' })
-      policyStore.createIndex('by-enabled', 'enabled')
+      if (!db.objectStoreNames.contains('policies')) {
+        const policyStore = db.createObjectStore('policies', { keyPath: 'id' })
+        policyStore.createIndex('by-enabled', 'enabled')
+      }
 
       // Timeline
-      const timelineStore = db.createObjectStore('timeline', { keyPath: 'id' })
-      timelineStore.createIndex('by-timestamp', 'timestamp')
-      timelineStore.createIndex('by-userId', 'userId')
+      if (!db.objectStoreNames.contains('timeline')) {
+        const timelineStore = db.createObjectStore('timeline', { keyPath: 'id' })
+        timelineStore.createIndex('by-timestamp', 'timestamp')
+        timelineStore.createIndex('by-userId', 'userId')
+      }
 
       // Focus Sessions
-      const focusStore = db.createObjectStore('focusSessions', { keyPath: 'id' })
-      focusStore.createIndex('by-taskId', 'taskId')
+      if (!db.objectStoreNames.contains('focusSessions')) {
+        const focusStore = db.createObjectStore('focusSessions', { keyPath: 'id' })
+        focusStore.createIndex('by-taskId', 'taskId')
+      }
+
+      // Errors (new in version 2)
+      if (!db.objectStoreNames.contains('errors')) {
+        const errorStore = db.createObjectStore('errors', { keyPath: 'id' })
+        errorStore.createIndex('by-status', 'status')
+        errorStore.createIndex('by-origin', 'origin')
+        errorStore.createIndex('by-traceId', 'traceId')
+      }
     }
   })
 

@@ -1,0 +1,202 @@
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                   RADAR DASHBOARD - SYSTEM ARCHITECTURE                       ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ PRESENTATION LAYER                                                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ ┌─────────────┬─────────────┬─────────────┬─────────────┬─────────────┐    │
+│ │ Task Views  │ Policy View │ Webhook Cfg │ LLM Config  │ Dashboard   │    │
+│ └─────────────┴─────────────┴─────────────┴─────────────┴─────────────┘    │
+│                                  Vue 3 Components                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ STATE MANAGEMENT LAYER (Pinia Stores)                                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐        │
+│ │ TaskStore    │ │ LLMStore     │ │ AuthStore    │ │ DashStore    │        │
+│ │ - tasks      │ │ - config     │ │ - user       │ │ - state      │        │
+│ │ - status     │ │ - responses  │ │ - session    │ │ - progress   │        │
+│ └──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘        │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ EXECUTION LAYER                                                             │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ┌─────────────────────┐    ┌─────────────────────┐    ┌─────────────────┐ │
+│  │  run_code.ts        │    │  policy_agent.ts    │    │ observer_bot.ts │ │
+│  ├─────────────────────┤    ├─────────────────────┤    ├─────────────────┤ │
+│  │ • Code validation   │    │ • Policy creation   │    │ • Span polling  │ │
+│  │ • Code execution    │    │ • Condition eval    │    │ • Rule matching │ │
+│  │ • Timeout control   │    │ • Action execution  │    │ • Action exec   │ │
+│  │ • Context mgmt      │    │ • History tracking  │    │ • Custom rules  │ │
+│  └─────────────────────┘    └─────────────────────┘    └─────────────────┘ │
+│                                                                              │
+│  ┌─────────────────────────┐                                                │
+│  │  webhook_receiver.ts    │                                                │
+│  ├─────────────────────────┤                                                │
+│  │ • Webhook registration  │                                                │
+│  │ • Signature verify      │                                                │
+│  │ • Payload processing    │                                                │
+│  │ • Policy triggering     │                                                │
+│  └─────────────────────────┘                                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+                    ↓                              ↓
+┌────────────────────────────────────┐  ┌──────────────────────────────────┐
+│ INTEGRATION LAYER                  │  │ UTILITIES LAYER                  │
+├────────────────────────────────────┤  ├──────────────────────────────────┤
+│ LLM Agent                          │  │ Tracing (span.ts)               │
+│ ┌────────────────────────────────┐ │  │ ┌────────────────────────────┐  │
+│ │ llm-agent/client.ts            │ │  │ │ • SpanBuilder             │  │
+│ │ - OpenAI, Ollama, MacMind      │ │  │ │ • Trace context           │  │
+│ │ - Message formatting           │ │  │ │ • Event tracking          │  │
+│ │ - JSON validation              │ │  │ │ • Hash computation        │  │
+│ │ - Token tracking               │ │  │ └────────────────────────────┘  │
+│ └────────────────────────────────┘ │  │                                  │
+│                                    │  │ Task Utils (task.ts)             │
+│ llm-agent/index.ts                │  │ ┌────────────────────────────┐  │
+│ - classifyTasks                    │  │ │ • Priority calculation    │  │
+│ - summarizeState                   │  │ │ • Task filtering          │  │
+│ - generateTaskFromSpan             │  │ │ • Export/Import (NDJSON)  │  │
+│ - generatePolicy                   │  │ └────────────────────────────┘  │
+│                                    │  │                                  │
+│ llm-agent/prompts.ts               │  │ DB Operations (db.ts)            │
+│ - Prompt templates                 │  │ ┌────────────────────────────┐  │
+│ - JSON schemas                     │  │ │ • Query builders           │  │
+│                                    │  │ │ • Transaction support      │  │
+└────────────────────────────────────┘  │ │ • Index management         │  │
+                                        │ └────────────────────────────┘  │
+                                        └──────────────────────────────────┘
+                                                      ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ PERSISTENCE LAYER (IndexedDB)                                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐           │
+│ │  tasks   │ │  spans   │ │  files   │ │ policies │ │ timeline │           │
+│ │          │ │          │ │          │ │          │ │          │           │
+│ │ Indexes: │ │ Indexes: │ │          │ │ Indexes: │ │ Indexes: │           │
+│ │ •status  │ │•traceId  │ │ metadata │ │•enabled  │ │•timestamp│           │
+│ │ •assignee│ │•userId   │ │          │ │          │ │•userId   │           │
+│ │ •priority│ │          │ │          │ │          │ │          │           │
+│ └──────────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘           │
+│                                                                              │
+│ ┌────────────────────────────────────────┐  ┌───────────────────────────┐  │
+│ │ fileMetadata                           │  │ focusSessions             │  │
+│ │ Indexes: by-taskId                     │  │ Indexes: by-taskId        │  │
+│ └────────────────────────────────────────┘  └───────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                    EXECUTION FLOW DIAGRAMS                                    ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+FLOW 1: CODE EXECUTION (run_code.ts)
+┌──────────────┐      ┌──────────────┐      ┌──────────────┐      ┌──────────┐
+│ User Code    │──→   │ Validation   │──→   │ Context Prep │──→   │ Execute  │
+│              │      │ (regex based)│      │              │      │ with     │
+│              │      │              │      │              │      │ timeout  │
+└──────────────┘      └──────────────┘      └──────────────┘      └──────────┘
+                             ↓                        ↓                   ↓
+                      [Dangerous Pattern            [Task Store,      [Create
+                        Detection]                   Upload Store,    Span]
+                                                     LLM Store]
+
+FLOW 2: POLICY EXECUTION (policy_agent.ts)
+┌──────────────┐      ┌──────────────┐      ┌──────────────┐      ┌──────────┐
+│ Trigger      │      │ Filter       │      │ Evaluate     │      │ Execute  │
+│ Event        │──→   │ Enabled      │──→   │ Condition    │──→   │ Action   │
+│              │      │ Policies     │      │ (Function)   │      │ (Function)
+└──────────────┘      └──────────────┘      └──────────────┘      └──────────┘
+                                                    ↓ (if met)              ↓
+                                              Available Context:     [Track
+                                              createTask,            Execution,
+                                              updateTask, log        Span End]
+
+FLOW 3: OBSERVER BOT (observer_bot.ts)
+┌──────────────┐      ┌──────────────┐      ┌──────────────┐      ┌──────────┐
+│ Poll Spans   │      │ Match Rules  │      │ Check        │      │ Execute  │
+│ (5s interval)│──→   │ (name + cond)│──→   │ Condition    │──→   │ Action   │
+│              │      │              │      │ if provided  │      │ (create  │
+└──────────────┘      └──────────────┘      └──────────────┘      │ task,etc)│
+     ↓                                                              └──────────┘
+   [Recent                                                                ↓
+    spans only]                                           [LLM generates task]
+
+FLOW 4: WEBHOOK RECEPTION (webhook_receiver.ts)
+┌──────────────┐      ┌──────────────┐      ┌──────────────┐      ┌──────────┐
+│ Webhook      │      │ Verify       │      │ Extract      │      │ Process  │
+│ Payload      │──→   │ Signature    │──→   │ Task Data    │──→   │ &        │
+│              │      │ (if secret)  │      │              │      │ Trigger  │
+└──────────────┘      └──────────────┘      └──────────────┘      │ Policies │
+                             ↓                        ↓             └──────────┘
+                      [STUB: just checks        [Naive extraction          ↓
+                        existence]               fallback chain]    [Create Task,
+                                                                     Trigger Policy]
+
+FLOW 5: LLM INTEGRATION (llm-agent/client.ts)
+┌──────────────┐      ┌──────────────┐      ┌──────────────┐      ┌──────────┐
+│ LLM Request  │      │ Create       │      │ API Call     │      │ Validate │
+│ (prompt)     │──→   │ Message List │──→   │ (axios)      │──→   │ JSON     │
+│              │      │              │      │              │      │ Response │
+└──────────────┘      └──────────────┘      └──────────────┘      └──────────┘
+     ↓                        ↓                        ↓                   ↓
+   [No input            [System message    [60s timeout,      [Client-side
+    validation]         from template]     no injection       validation
+                                          protection]         only]
+
+
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                  WHERE SAFETY GUARDRAILS MUST BE INJECTED                     ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+CRITICAL INJECTION POINTS:
+
+1. CODE EXECUTION GUARD
+   run_code.ts:95 ──→ BEFORE Function construction
+   ├─ AST analysis needed
+   ├─ Quota checking needed
+   ├─ Rate limiting needed
+   └─ Audit logging needed
+
+2. POLICY EXECUTION GUARD
+   policy_agent.ts:217 ──→ BEFORE condition Function construction
+   policy_agent.ts:263 ──→ BEFORE action Function construction
+   ├─ Syntax validation needed
+   ├─ Circular dependency detection needed
+   ├─ Timeout enforcement needed
+   └─ Execution history limits needed
+
+3. OBSERVER BOT GUARD
+   observer_bot.ts:94-102 ──→ Rule matching loop
+   ├─ Rule validation needed
+   ├─ Rate limit per rule needed
+   ├─ Task creation caps needed
+   └─ LLM call rate limiting needed
+
+4. WEBHOOK GUARD
+   webhook_receiver.ts:105 ──→ Signature verification
+   webhook_receiver.ts:113 ──→ Payload validation
+   ├─ Proper HMAC verification needed
+   ├─ Payload size limits needed
+   ├─ Rate limiting per webhook needed
+   ├─ Schema validation needed
+   └─ Sanitization needed
+
+5. LLM GUARD
+   llm-agent/client.ts:59-86 ──→ Before API calls
+   ├─ Prompt injection detection needed
+   ├─ Token limit enforcement needed
+   ├─ Rate limiting per module needed
+   ├─ Response validation needed
+   └─ Cost tracking needed
+
+6. AUDIT & MONITORING
+   Throughout ──→ Centralized logging
+   ├─ Execution attempts logging
+   ├─ Error classification
+   ├─ Performance metrics
+   └─ Compliance reporting needed
+

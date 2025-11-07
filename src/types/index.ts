@@ -233,3 +233,82 @@ export interface NDJSONExport {
   exportedAt: string
   data: any[]
 }
+
+// Safety Guardrails
+export interface ExecutionResult<T = any> {
+  success: boolean
+  data?: T
+  error?: string
+  errorCode?: string
+  retryable: boolean
+  traceId: string
+  origin: string
+  timestamp: string
+  duration?: number
+  metadata?: Record<string, any>
+}
+
+export interface GuardrailViolation {
+  id: string
+  type: 'code_validation' | 'rate_limit' | 'resource_limit' | 'llm_safety' | 'webhook_security' | 'policy_validation'
+  severity: 'low' | 'medium' | 'high' | 'critical'
+  message: string
+  origin: string
+  traceId: string
+  spanId?: string
+  timestamp: string
+  metadata?: Record<string, any>
+}
+
+export interface ErrorRecord {
+  id: string
+  traceId: string
+  errorMessage: string
+  errorStack?: string
+  origin: string
+  retryable: boolean
+  retryCount: number
+  maxRetries: number
+  status: 'pending' | 'retrying' | 'failed' | 'resolved'
+  firstOccurrence: string
+  lastOccurrence: string
+  spanId?: string
+  metadata?: Record<string, any>
+}
+
+export interface RetryConfig {
+  maxAttempts: number
+  intervals: number[] // milliseconds [1000, 3000, 7000]
+  retryableErrors?: string[]
+  onRetry?: (attempt: number, error: Error) => void
+}
+
+export interface WatchdogConfig {
+  checkIntervalMinutes: number
+  stuckThresholdMinutes: number
+  actions: ('mark_error' | 'emit_retry' | 'log_critical')[]
+}
+
+export interface CodeGuardrailsConfig {
+  blockedGlobals: string[]
+  allowedUtils: string[]
+  maxCodeSize: number
+  enableSignatureVerification: boolean
+}
+
+export interface LLMSafetyConfig {
+  enablePromptInjectionDetection: boolean
+  enableSchemaValidation: boolean
+  fallbackOnError: boolean
+  maxRetries: number
+}
+
+export interface SpanValidationResult {
+  valid: boolean
+  errors: string[]
+  checks: {
+    hasCode?: boolean
+    timestampValid?: boolean
+    validOwner?: boolean
+  }
+}
