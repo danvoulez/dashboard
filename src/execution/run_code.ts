@@ -3,6 +3,7 @@ import type { Span } from '@/types'
 import { useTaskStore } from '@/stores/tasks'
 import { useUploadStore } from '@/stores/uploads'
 import { useLLMStore } from '@/stores/llm'
+import { validateCode as validateCodeGuardrails, createSafeContext } from '@/guardrails/code_guardrails'
 
 export interface CodeExecutionResult {
   success: boolean
@@ -53,6 +54,38 @@ export async function runCode(
   const startTime = Date.now()
 
   try {
+    // Validate code using guardrails
+    const validation = validateCodeGuardrails(code, {
+      origin: 'run_code.execute',
+      traceId: span.getSpan().traceId,
+      spanId: span.getSpan().id
+    })
+
+    if (!validation.valid) {
+      span.addEvent('code_validation_failed', {
+        violations: validation.violations.length,
+        errors: validation.errors
+      })
+
+      span.setAttribute('guardrail_violations', validation.violations.length)
+      await span.end('error', `Code validation failed: ${validation.errors[0]}`)
+
+      return {
+        success: false,
+        error: `Code validation failed: ${validation.errors.join(', ')}`,
+        duration: Date.now() - startTime,
+        spanId: span.getSpan().id
+      }
+    }
+
+    if (validation.warnings.length > 0) {
+      span.addEvent('code_validation_warnings', {
+        warnings: validation.warnings
+      })
+    }
+
+    span.addEvent('code_validation_passed')
+
     // Build execution context
     const taskStore = useTaskStore()
     const uploadStore = useUploadStore()
@@ -91,20 +124,27 @@ export async function runCode(
     }
 
     span.addEvent('execution_start')
+    span.setAttribute('guardrails_enabled', true)
+    span.setAttribute('code_validated', true)
 
-    // Create function from code
+    // Create safe execution context (limited scope)
+    const safeCtx = createSafeContext(context)
+
+    // Create function from code (removed 'with' statement for security)
     const codeFunction = new Function('ctx', `
-      with (ctx) {
-        return (async () => {
-          ${code}
-        })()
-      }
+      "use strict";
+      return (async () => {
+        const { createTask, updateTask, getTasks, log, input, params } = ctx;
+        ${code}
+      })()
     `)
 
     // Execute with timeout
     const timeoutMs = options.timeout || 30000
+    span.setAttribute('timeout_ms', timeoutMs)
+
     const result = await executeWithTimeout(
-      codeFunction(context),
+      codeFunction(safeCtx),
       timeoutMs
     )
 
