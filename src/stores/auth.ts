@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { User, AuthSession } from '@/types'
 import { createSpan } from '@/utils/span'
+import { initiateOAuthLogin, handleOAuthCallback, isOAuthConfigured } from '@/auth/oauth'
 
 export const useAuthStore = defineStore('auth', () => {
   const session = ref<AuthSession | null>(null)
@@ -15,11 +16,20 @@ export const useAuthStore = defineStore('auth', () => {
     })
 
     try {
-      // In a real implementation, this would redirect to OAuth provider
-      // For now, we'll simulate a login
-      span.addEvent('oauth_redirect', { provider })
+      // Check if OAuth is configured for this provider
+      if (provider !== 'telegram' && isOAuthConfigured(provider)) {
+        // Real OAuth flow
+        span.addEvent('oauth_redirect', { provider })
+        await span.end('ok')
+        await initiateOAuthLogin(provider)
+        // User will be redirected to OAuth provider
+        // Callback will be handled by handleCallback method
+        return null
+      }
 
-      // Simulate OAuth callback response
+      // Fallback: Mock login for testing or when OAuth is not configured
+      span.addEvent('mock_login', { provider })
+
       const mockUser: User = {
         id: crypto.randomUUID(),
         email: `user@${provider}.com`,
@@ -41,6 +51,27 @@ export const useAuthStore = defineStore('auth', () => {
       return session.value
     } catch (error) {
       span.addEvent('login_error', { error: String(error) })
+      await span.end('error', error instanceof Error ? error.message : String(error))
+      throw error
+    }
+  }
+
+  async function handleCallback(provider: 'google' | 'github', callbackUrl: string) {
+    const span = createSpan({
+      name: 'auth.handleCallback',
+      attributes: { provider }
+    })
+
+    try {
+      const authSession = await handleOAuthCallback(provider, callbackUrl)
+      session.value = authSession
+
+      span.addEvent('login_success', { userId: authSession.user.id })
+      await span.end('ok')
+
+      return authSession
+    } catch (error) {
+      span.addEvent('callback_error', { error: String(error) })
       await span.end('error', error instanceof Error ? error.message : String(error))
       throw error
     }
@@ -80,6 +111,7 @@ export const useAuthStore = defineStore('auth', () => {
     isAuthenticated,
     user,
     login,
+    handleCallback,
     logout,
     checkSession
   }
