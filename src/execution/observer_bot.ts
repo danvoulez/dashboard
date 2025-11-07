@@ -4,6 +4,7 @@ import { getSpans } from '@/utils/db'
 import { createLLMAgent } from '@/llm-agent'
 import { useTaskStore } from '@/stores/tasks'
 import { useLLMStore } from '@/stores/llm'
+import { callSafeLLM } from '@/llm-agent/safe_llm'
 
 export interface ObserverRule {
   id: string
@@ -16,16 +17,33 @@ export interface ObserverRule {
   enabled: boolean
 }
 
+interface ActionRateLimit {
+  count: number
+  windowStart: number
+  lastAction: number
+}
+
 /**
- * Observer Bot - Monitors spans and triggers actions
+ * Observer Bot - Monitors spans and triggers actions with rate limiting
  */
 export class ObserverBot {
   private rules: ObserverRule[] = []
   private isRunning = false
   private checkInterval: NodeJS.Timeout | null = null
+  private actionRateLimits = new Map<string, ActionRateLimit>()
+  private processedSpans = new Set<string>() // Deduplication
+
+  // Rate limit configuration
+  private readonly MAX_ACTIONS_PER_MINUTE = 10
+  private readonly MAX_ACTIONS_PER_HOUR = 100
+  private readonly RATE_LIMIT_WINDOW = 60000 // 1 minute
+  private readonly DEDUP_WINDOW = 300000 // 5 minutes
 
   constructor(rules: ObserverRule[] = []) {
     this.rules = rules
+
+    // Cleanup processed spans every 5 minutes
+    setInterval(() => this.cleanupProcessedSpans(), 5 * 60 * 1000)
   }
 
   /**
@@ -131,9 +149,100 @@ export class ObserverBot {
   }
 
   /**
-   * Execute rule action
+   * Check rate limit for actions
+   */
+  private checkActionRateLimit(ruleId: string): { allowed: boolean; reason?: string } {
+    const now = Date.now()
+    let limit = this.actionRateLimits.get(ruleId)
+
+    if (!limit || now - limit.windowStart > this.RATE_LIMIT_WINDOW) {
+      // New window
+      limit = {
+        count: 0,
+        windowStart: now,
+        lastAction: 0
+      }
+      this.actionRateLimits.set(ruleId, limit)
+    }
+
+    // Check per-minute limit
+    if (limit.count >= this.MAX_ACTIONS_PER_MINUTE) {
+      return {
+        allowed: false,
+        reason: `Rate limit exceeded for rule ${ruleId}: ${limit.count}/${this.MAX_ACTIONS_PER_MINUTE} actions per minute`
+      }
+    }
+
+    // Throttle: minimum 100ms between actions
+    if (now - limit.lastAction < 100) {
+      return {
+        allowed: false,
+        reason: 'Actions too frequent (throttled)'
+      }
+    }
+
+    return { allowed: true }
+  }
+
+  /**
+   * Record action execution
+   */
+  private recordAction(ruleId: string) {
+    const limit = this.actionRateLimits.get(ruleId)
+    if (limit) {
+      limit.count++
+      limit.lastAction = Date.now()
+    }
+  }
+
+  /**
+   * Check if span was already processed
+   */
+  private isSpanProcessed(spanId: string, ruleId: string): boolean {
+    const key = `${spanId}:${ruleId}`
+    return this.processedSpans.has(key)
+  }
+
+  /**
+   * Mark span as processed
+   */
+  private markSpanProcessed(spanId: string, ruleId: string) {
+    const key = `${spanId}:${ruleId}`
+    this.processedSpans.add(key)
+  }
+
+  /**
+   * Cleanup old processed spans
+   */
+  private cleanupProcessedSpans() {
+    // For simplicity, clear all after 5 minutes
+    // In production, store with timestamps
+    this.processedSpans.clear()
+  }
+
+  /**
+   * Execute rule action with rate limiting and deduplication
    */
   private async executeAction(span: Span, rule: ObserverRule, parentSpan: SpanBuilder) {
+    // Check deduplication
+    if (this.isSpanProcessed(span.id, rule.id)) {
+      parentSpan.addEvent('action_skipped_duplicate', {
+        ruleId: rule.id,
+        spanId: span.id
+      })
+      return
+    }
+
+    // Check rate limit
+    const rateLimitCheck = this.checkActionRateLimit(rule.id)
+    if (!rateLimitCheck.allowed) {
+      parentSpan.addEvent('action_skipped_rate_limit', {
+        ruleId: rule.id,
+        reason: rateLimitCheck.reason
+      })
+      return
+    }
+
     parentSpan.addEvent('executing_action', {
       ruleId: rule.id,
       action: rule.action,
@@ -143,41 +252,116 @@ export class ObserverBot {
     const taskStore = useTaskStore()
     const llmStore = useLLMStore()
 
-    switch (rule.action) {
-      case 'create_task': {
-        // Use LLM to generate task from span
-        const llmAgent = createLLMAgent(llmStore.config)
-        const taskData = await llmAgent.generateTaskFromSpan(span)
+    try {
+      switch (rule.action) {
+        case 'create_task': {
+          // Use SAFE LLM to generate task from span
+          const result = await callSafeLLM(llmStore.config, {
+            messages: [
+              {
+                role: 'system',
+                content: 'You are an assistant that creates actionable tasks from span data. Generate a concise title and description.'
+              },
+              {
+                role: 'user',
+                content: `Create a task for this span:\nName: ${span.name}\nStatus: ${span.status}\nError: ${span.error || 'none'}\nAttributes: ${JSON.stringify(span.attributes)}`
+              }
+            ],
+            responseFormat: 'json',
+            enableCache: true,
+            enableFallback: true,
+            tenantId: 'observer_bot'
+          })
 
-        await taskStore.createTask(taskData.title || 'Generated from span', {
-          description: taskData.description,
-          tags: taskData.tags || ['auto-generated'],
-          origin: 'span',
-          spanId: span.id,
-          deadline: taskData.deadline,
-          metadata: {
-            observerRuleId: rule.id,
-            sourceSpanId: span.id
+          let taskData: any = {}
+          try {
+            taskData = JSON.parse(result.content)
+          } catch {
+            taskData = {
+              title: `Review span: ${span.name}`,
+              description: `Span ${span.id} requires attention`
+            }
           }
-        })
 
-        parentSpan.addEvent('task_created', { ruleId: rule.id })
-        break
-      }
+          await taskStore.createTask(taskData.title || 'Generated from span', {
+            description: taskData.description || `Span: ${span.name}`,
+            tags: taskData.tags || ['auto-generated', 'observer'],
+            origin: 'span',
+            spanId: span.id,
+            deadline: taskData.deadline,
+            metadata: {
+              observerRuleId: rule.id,
+              sourceSpanId: span.id,
+              llmCached: result.cached
+            }
+          })
 
-      case 'notify': {
-        // TODO: Implement notification system
-        console.log(`Notification from rule ${rule.name}:`, span.name)
-        break
-      }
+          parentSpan.addEvent('task_created', {
+            ruleId: rule.id,
+            cached: result.cached
+          })
 
-      case 'custom': {
-        // Execute custom action from config
-        if (rule.actionConfig.callback) {
-          await rule.actionConfig.callback(span, rule)
+          // Record action and mark as processed
+          this.recordAction(rule.id)
+          this.markSpanProcessed(span.id, rule.id)
+
+          break
         }
-        break
+
+        case 'notify': {
+          // Rate-limited notification
+          console.log(`[Observer Bot] Notification from rule ${rule.name}:`, span.name)
+
+          this.recordAction(rule.id)
+          this.markSpanProcessed(span.id, rule.id)
+
+          break
+        }
+
+        case 'custom': {
+          // Execute custom action from config
+          if (rule.actionConfig.callback) {
+            await rule.actionConfig.callback(span, rule)
+          }
+
+          this.recordAction(rule.id)
+          this.markSpanProcessed(span.id, rule.id)
+
+          break
+        }
       }
+    } catch (error) {
+      parentSpan.addEvent('action_error', {
+        ruleId: rule.id,
+        error: error instanceof Error ? error.message : String(error)
+      })
+    }
+  }
+
+  /**
+   * Get action statistics
+   */
+  getStats(): {
+    rules: number
+    running: boolean
+    actionsPerRule: Record<string, { count: number; remaining: number }>
+    processedSpans: number
+  } {
+    const actionsPerRule: Record<string, { count: number; remaining: number }> = {}
+
+    for (const rule of this.rules) {
+      const limit = this.actionRateLimits.get(rule.id)
+      actionsPerRule[rule.id] = {
+        count: limit?.count || 0,
+        remaining: this.MAX_ACTIONS_PER_MINUTE - (limit?.count || 0)
+      }
+    }
+
+    return {
+      rules: this.rules.length,
+      running: this.isRunning,
+      actionsPerRule,
+      processedSpans: this.processedSpans.size
     }
   }
 

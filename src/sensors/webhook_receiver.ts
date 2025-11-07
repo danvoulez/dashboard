@@ -3,6 +3,7 @@ import { createSpan } from '@/utils/span'
 import { triggerPolicies, POLICY_TRIGGERS } from '@/execution/policy_agent'
 import { useTaskStore } from '@/stores/tasks'
 import { v4 as uuidv4 } from 'uuid'
+import { getWebhookSecurity } from '@/security/webhook_security'
 
 export interface WebhookConfig {
   id: string
@@ -11,17 +12,24 @@ export interface WebhookConfig {
   enabled: boolean
   autoCreateTask?: boolean
   policyTrigger?: string
+  provider?: 'github' | 'telegram' | 'generic'
+  requireSignature?: boolean
+  maxPayloadSize?: number
 }
 
 /**
- * Webhook Receiver - Handle incoming webhooks
+ * Webhook Receiver - Handle incoming webhooks with comprehensive security
  */
 export class WebhookReceiver {
   private configs: Map<string, WebhookConfig> = new Map()
   private events: WebhookEvent[] = []
+  private security = getWebhookSecurity()
+  private recentHashes = new Map<string, number>() // For deduplication
 
   constructor() {
     this.loadConfigs()
+    // Cleanup task runs every 5 minutes
+    setInterval(() => this.cleanupOldData(), 5 * 60 * 1000)
   }
 
   /**
@@ -76,7 +84,7 @@ export class WebhookReceiver {
   }
 
   /**
-   * Process incoming webhook
+   * Process incoming webhook with comprehensive security checks
    */
   async receiveWebhook(
     webhookId: string,
@@ -87,41 +95,100 @@ export class WebhookReceiver {
       name: 'webhook.receive',
       attributes: {
         webhookId,
-        payloadSize: JSON.stringify(payload).length
+        payloadSize: JSON.stringify(payload).length,
+        ip: headers['x-forwarded-for'] || headers['x-real-ip'] || 'unknown'
       }
     })
 
     try {
       const config = this.configs.get(webhookId)
       if (!config) {
+        span.addEvent('webhook_not_found', { webhookId })
         throw new Error(`Webhook not found: ${webhookId}`)
       }
 
       if (!config.enabled) {
+        span.addEvent('webhook_disabled', { webhookId })
         throw new Error(`Webhook is disabled: ${webhookId}`)
       }
 
-      // Verify secret if configured
-      if (config.secret) {
-        const signature = headers['x-webhook-signature'] || headers['x-hub-signature-256']
-        if (!signature || !this.verifySignature(payload, config.secret, signature)) {
-          throw new Error('Invalid webhook signature')
-        }
+      // SECURITY: Rate limiting per webhook + IP
+      const rateLimitKey = `${webhookId}:${headers['x-forwarded-for'] || headers['x-real-ip'] || 'unknown'}`
+      const rateLimit = this.security.checkRateLimit(rateLimitKey)
+      if (!rateLimit.allowed) {
+        span.addEvent('rate_limit_exceeded', {
+          key: rateLimitKey,
+          reason: rateLimit.reason
+        })
+        throw new Error(rateLimit.reason || 'Rate limit exceeded')
       }
+      span.setAttribute('rate_limit_remaining', rateLimit.remaining)
+
+      // SECURITY: Payload structure validation
+      if (config.provider && !this.security.validatePayloadStructure(payload, config.provider)) {
+        span.addEvent('invalid_payload_structure', { provider: config.provider })
+        throw new Error(`Invalid ${config.provider} webhook payload structure`)
+      }
+
+      // SECURITY: Deduplication via payload hash
+      const payloadHash = await this.security.computePayloadHash(payload)
+      const recentTimestamp = this.recentHashes.get(payloadHash)
+      if (recentTimestamp && Date.now() - recentTimestamp < 60000) {
+        span.addEvent('duplicate_webhook_rejected', { payloadHash: payloadHash.substring(0, 16) })
+        throw new Error('Duplicate webhook rejected (received within last 60s)')
+      }
+      this.recentHashes.set(payloadHash, Date.now())
+
+      // SECURITY: HMAC signature verification
+      if (config.secret || config.requireSignature) {
+        const signature = headers['x-webhook-signature'] ||
+                         headers['x-hub-signature-256'] ||
+                         headers['x-hub-signature'] ||
+                         headers['x-telegram-bot-api-secret-token']
+
+        if (!signature) {
+          span.addEvent('missing_signature')
+          throw new Error('Webhook signature required but not provided')
+        }
+
+        const timestamp = headers['x-webhook-timestamp'] || headers['x-slack-request-timestamp']
+        const verification = await this.security.verifyHMAC(
+          payload,
+          config.secret || '',
+          signature,
+          timestamp
+        )
+
+        if (!verification.valid) {
+          span.addEvent('signature_verification_failed', { reason: verification.reason })
+          throw new Error(`Signature verification failed: ${verification.reason}`)
+        }
+
+        span.addEvent('signature_verified', {
+          timestamp: verification.timestamp,
+          skew: verification.timestamp ? Date.now() - verification.timestamp : 0
+        })
+      }
+
+      // SECURITY: Sanitize payload to prevent injection
+      const sanitizedPayload = this.security.sanitizePayload(payload)
 
       // Create event record
       const event: WebhookEvent = {
         id: uuidv4(),
         sensorId: webhookId,
-        payload,
-        headers,
+        payload: sanitizedPayload,
+        headers: this.sanitizeHeaders(headers),
         receivedAt: new Date().toISOString(),
         processed: false,
         spanId: span.getSpan().id
       }
 
       this.events.push(event)
-      span.addEvent('webhook_received', { eventId: event.id })
+      span.addEvent('webhook_received', {
+        eventId: event.id,
+        payloadHash: payloadHash.substring(0, 16)
+      })
 
       // Process webhook
       await this.processWebhook(event, config, span)
@@ -134,6 +201,30 @@ export class WebhookReceiver {
       await span.end('error', error instanceof Error ? error.message : String(error))
       throw error
     }
+  }
+
+  /**
+   * Sanitize headers to prevent information leakage
+   */
+  private sanitizeHeaders(headers: Record<string, string>): Record<string, string> {
+    const sanitized: Record<string, string> = {}
+    const allowedHeaders = [
+      'content-type',
+      'user-agent',
+      'x-github-delivery',
+      'x-github-event',
+      'x-hub-signature-256',
+      'x-webhook-id',
+      'x-webhook-timestamp'
+    ]
+
+    for (const key of allowedHeaders) {
+      if (headers[key]) {
+        sanitized[key] = headers[key]
+      }
+    }
+
+    return sanitized
   }
 
   /**
@@ -209,21 +300,41 @@ export class WebhookReceiver {
   }
 
   /**
-   * Verify webhook signature
+   * Clear old events (TTL enforcement)
    */
-  private verifySignature(payload: any, secret: string, signature: string): boolean {
-    // This is a simplified version
-    // In production, implement proper HMAC verification based on the webhook provider
-    // e.g., GitHub uses HMAC-SHA256
+  clearOldEvents(olderThanDays: number = 30) {
+    const cutoff = Date.now() - olderThanDays * 24 * 60 * 60 * 1000
+    const beforeCount = this.events.length
+    this.events = this.events.filter(e => {
+      return new Date(e.receivedAt).getTime() > cutoff
+    })
+    return beforeCount - this.events.length
+  }
 
-    try {
-      const payloadString = JSON.stringify(payload)
-      // TODO: Implement proper HMAC signature verification
-      // For now, just check if signature exists
-      return !!signature
-    } catch {
-      return false
+  /**
+   * Cleanup old data (events, rate limits, deduplication hashes)
+   */
+  private cleanupOldData() {
+    // Clear events older than 30 days
+    this.clearOldEvents(30)
+
+    // Clear rate limit entries
+    this.security.cleanupRateLimits()
+
+    // Clear old deduplication hashes (older than 1 hour)
+    const now = Date.now()
+    for (const [hash, timestamp] of this.recentHashes.entries()) {
+      if (now - timestamp > 3600000) {
+        this.recentHashes.delete(hash)
+      }
     }
+  }
+
+  /**
+   * Generate secure webhook secret
+   */
+  async generateWebhookSecret(): Promise<string> {
+    return await this.security.generateSecret()
   }
 
   /**
@@ -268,15 +379,6 @@ export class WebhookReceiver {
     return `${window.location.origin}/api/webhooks/${webhookId}`
   }
 
-  /**
-   * Clear old events
-   */
-  clearOldEvents(olderThanDays: number = 30) {
-    const cutoff = Date.now() - olderThanDays * 24 * 60 * 60 * 1000
-    this.events = this.events.filter(e => {
-      return new Date(e.receivedAt).getTime() > cutoff
-    })
-  }
 }
 
 // Singleton instance

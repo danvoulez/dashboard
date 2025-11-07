@@ -1,5 +1,6 @@
 import type { CodeGuardrailsConfig, GuardrailViolation } from '@/types'
 import { v4 as uuidv4 } from 'uuid'
+import { getCodeExecutionSecurity } from '@/security/code_execution_security'
 
 /**
  * code_guardrails - Limitações de escopo para execução segura em run_code
@@ -49,7 +50,7 @@ export interface CodeValidationResult {
 }
 
 /**
- * Validate code before execution
+ * Validate code before execution (ENHANCED with token analysis)
  */
 export function validateCode(
   code: string,
@@ -58,6 +59,7 @@ export function validateCode(
     traceId: string
     spanId?: string
     config?: Partial<CodeGuardrailsConfig>
+    tenantId?: string
   }
 ): CodeValidationResult {
   const config: CodeGuardrailsConfig = {
@@ -68,6 +70,32 @@ export function validateCode(
   const violations: GuardrailViolation[] = []
   const errors: string[] = []
   const warnings: string[] = []
+
+  const security = getCodeExecutionSecurity()
+
+  // ENHANCED: Token-based validation
+  const enhancedValidation = security.validateCode(code)
+  errors.push(...enhancedValidation.errors)
+  warnings.push(...enhancedValidation.warnings)
+
+  // Add violations for enhanced checks
+  for (const error of enhancedValidation.errors) {
+    const violation: GuardrailViolation = {
+      id: uuidv4(),
+      type: 'code_validation',
+      severity: enhancedValidation.risk === 'critical' ? 'critical' : 'high',
+      message: error,
+      origin: options.origin,
+      traceId: options.traceId,
+      spanId: options.spanId,
+      timestamp: new Date().toISOString(),
+      metadata: {
+        risk: enhancedValidation.risk,
+        validationType: 'token-based'
+      }
+    }
+    violations.push(violation)
+  }
 
   // Check 1: Code size
   if (code.length > config.maxCodeSize) {
@@ -110,83 +138,46 @@ export function validateCode(
     }
   }
 
-  // Check 3: Dangerous patterns (regex-based)
-  const dangerousPatterns = [
-    {
-      pattern: /eval\s*\(/gi,
-      message: 'Use of eval() is not allowed',
-      severity: 'critical' as const
-    },
-    {
-      pattern: /Function\s*\(/gi,
-      message: 'Use of Function() constructor is not allowed',
-      severity: 'critical' as const
-    },
-    {
-      pattern: /new\s+Function\s*\(/gi,
-      message: 'Use of new Function() is not allowed',
-      severity: 'critical' as const
-    },
-    {
-      pattern: /__proto__/gi,
-      message: 'Prototype pollution attempt detected (__proto__)',
-      severity: 'critical' as const
-    },
-    {
-      pattern: /constructor\s*\[\s*["']constructor["']\s*\]/gi,
-      message: 'Constructor access pattern detected',
-      severity: 'high' as const
-    },
-    {
-      pattern: /\.\s*constructor\s*\(/gi,
-      message: 'Direct constructor invocation detected',
-      severity: 'high' as const
-    },
-    {
-      pattern: /(while|for)\s*\(\s*(true|1)\s*\)/gi,
-      message: 'Potential infinite loop detected',
-      severity: 'medium' as const
-    }
-  ]
-
-  for (const { pattern, message, severity } of dangerousPatterns) {
-    const matches = code.match(pattern)
-    if (matches) {
+  // Check 3: Quota check (if tenantId provided)
+  if (options.tenantId) {
+    const quotaCheck = security.checkQuota(options.tenantId)
+    if (!quotaCheck.allowed) {
       const violation: GuardrailViolation = {
         id: uuidv4(),
         type: 'code_validation',
-        severity,
-        message: `${message} (${matches.length} occurrences)`,
+        severity: 'high',
+        message: quotaCheck.reason || 'Quota exceeded',
         origin: options.origin,
         traceId: options.traceId,
         spanId: options.spanId,
         timestamp: new Date().toISOString(),
         metadata: {
-          pattern: pattern.source,
-          occurrences: matches.length
+          quotaCheck
         }
       }
       violations.push(violation)
       errors.push(violation.message)
     }
-  }
 
-  // Check 4: Comments that might hide malicious code
-  const suspiciousComments = [
-    /\/\*[\s\S]*?(eval|Function|import|require)[\s\S]*?\*\//gi,
-    /\/\/.*?(eval|Function|import|require)/gi
-  ]
-
-  for (const pattern of suspiciousComments) {
-    const matches = code.match(pattern)
-    if (matches) {
-      warnings.push(`Suspicious content in comments: ${matches[0].substring(0, 50)}...`)
+    // Check circuit breaker
+    const circuitCheck = security.checkCircuitBreaker(options.tenantId)
+    if (!circuitCheck.allowed) {
+      const violation: GuardrailViolation = {
+        id: uuidv4(),
+        type: 'code_validation',
+        severity: 'critical',
+        message: circuitCheck.reason || 'Circuit breaker open',
+        origin: options.origin,
+        traceId: options.traceId,
+        spanId: options.spanId,
+        timestamp: new Date().toISOString(),
+        metadata: {
+          circuitState: circuitCheck.state
+        }
+      }
+      violations.push(violation)
+      errors.push(violation.message)
     }
-  }
-
-  // Check 5: String concatenation that might construct dangerous code
-  if (code.includes('String.fromCharCode') || code.includes('atob') || code.includes('btoa')) {
-    warnings.push('String encoding/decoding detected - potential obfuscation')
   }
 
   return {
@@ -214,13 +205,15 @@ export function sanitizeCode(code: string): string {
 }
 
 /**
- * Create safe execution context
+ * Create safe execution context with Proxy isolation
  */
 export function createSafeContext(baseContext: Record<string, any>): Record<string, any> {
-  const safeContext: Record<string, any> = {}
+  const security = getCodeExecutionSecurity()
 
   // Only copy allowed properties
   const allowedKeys = ['log', 'createTask', 'updateTask', 'getTasks', 'input', 'params']
+
+  const safeContext: Record<string, any> = {}
 
   for (const key of allowedKeys) {
     if (key in baseContext) {
@@ -238,7 +231,11 @@ export function createSafeContext(baseContext: Record<string, any>): Record<stri
     error: (...args: any[]) => console.error('[Safe Context]', ...args)
   }
 
-  return safeContext
+  // ENHANCED: Wrap with Proxy for additional security
+  return security.createSecureContext(
+    safeContext,
+    [...allowedKeys, 'Math', 'Date', 'JSON', 'console']
+  )
 }
 
 /**
@@ -260,11 +257,26 @@ export async function verifyCodeSignature(
  */
 export function checkExecutionQuota(
   origin: string,
-  userId: string
-): { allowed: boolean; reason?: string } {
-  // TODO: Implement rate limiting
-  // For now, allow all executions
-  return { allowed: true }
+  tenantId: string
+): { allowed: boolean; reason?: string; remaining?: number } {
+  const security = getCodeExecutionSecurity()
+  return security.checkQuota(tenantId)
+}
+
+/**
+ * Record execution result for circuit breaker
+ */
+export function recordExecutionResult(tenantId: string, success: boolean): void {
+  const security = getCodeExecutionSecurity()
+  security.recordExecution(tenantId, success)
+}
+
+/**
+ * Get execution statistics
+ */
+export function getExecutionStats(tenantId: string) {
+  const security = getCodeExecutionSecurity()
+  return security.getStats(tenantId)
 }
 
 /**
