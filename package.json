@@ -26,8 +26,8 @@
     "@vitejs/plugin-vue": "^5.0.4",
     "@vue/tsconfig": "^0.5.1",
     "typescript": "~5.4.5",
-    "vite": "^5.2.8",
-    "vite-plugin-pwa": "^0.19.8",
+    "vite": "^7.2.2",
+    "vite-plugin-pwa": "^1.1.0",
     "vue-tsc": "^2.0.11",
     "workbox-window": "^7.0.0"
   }
