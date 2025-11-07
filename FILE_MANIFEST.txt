@@ -1,0 +1,214 @@
+RADAR DASHBOARD - CODEBASE SECURITY ANALYSIS FILE MANIFEST
+===========================================================
+
+EXECUTION SYSTEMS (Core Risk Areas)
+===================================
+1. /home/user/dashboard/src/execution/run_code.ts (351 lines)
+   - CRITICAL: Regex validation bypass, no rate limiting
+   - Functions: runCode(), validateCode(), executeWithTimeout()
+   - Risk Level: CRITICAL
+   
+2. /home/user/dashboard/src/execution/policy_agent.ts (358 lines)
+   - CRITICAL: `with` statement injection, dynamic eval
+   - Functions: executeTrigger(), evaluateCondition(), executeAction()
+   - Risk Level: CRITICAL
+   
+3. /home/user/dashboard/src/execution/observer_bot.ts (264 lines)
+   - HIGH: Unbound task creation, arbitrary conditions
+   - Functions: checkSpans(), matchesRule(), executeAction()
+   - Risk Level: HIGH
+
+
+INTEGRATION SYSTEMS (External Input)
+====================================
+4. /home/user/dashboard/src/sensors/webhook_receiver.ts (346 lines)
+   - CRITICAL: Signature verification stubbed, secrets in localStorage
+   - Functions: receiveWebhook(), verifySignature(), processWebhook()
+   - Risk Level: CRITICAL
+   
+5. /home/user/dashboard/src/llm-agent/client.ts (251 lines)
+   - CRITICAL: API keys in headers, SSRF possible, no validation
+   - Functions: callLLM(), callLLMWithSchema(), createLLMClient()
+   - Risk Level: CRITICAL
+   
+6. /home/user/dashboard/src/llm-agent/index.ts (158 lines)
+   - HIGH: Wraps client calls, some risk from underlying client
+   - Functions: classifyTasks(), generatePolicyFromPrompt(), analyzeUpload()
+   - Risk Level: MEDIUM
+
+
+GUARDRAILS & SAFETY (Partially Hardened)
+========================================
+7. /home/user/dashboard/src/guardrails/code_guardrails.ts (299 lines)
+   - GOOD: Pattern detection, blocked globals, code size limits
+   - Status: Used by run_code.ts but regex-only validation
+   - Functions: validateCode(), sanitizeCode(), createSafeContext()
+   - Risk Level: MEDIUM (good foundation, limited scope)
+   
+8. /home/user/dashboard/src/guardrails/safe_llm.ts (378 lines)
+   - GOOD: Prompt injection detection, schema validation, retries
+   - Status: Available but not used by observer_bot
+   - Functions: detectPromptInjection(), safeLLMCall(), validateLLMResponse()
+   - Risk Level: LOW (good implementation)
+   
+9. /home/user/dashboard/src/guardrails/error_queue.ts (varies)
+   - GOOD: Error deduplication, retry tracking
+   - Status: Storage mechanism, no processing vulnerabilities
+   - Risk Level: LOW
+   
+10. /home/user/dashboard/src/guardrails/retrySafe.ts (varies)
+    - GOOD: Exponential backoff, attempt limiting
+    - Status: Wrapper function, safe
+    - Risk Level: LOW
+    
+11. /home/user/dashboard/src/guardrails/watchdog.ts (varies)
+    - GOOD: Stuck span detection, monitoring
+    - Status: Background service
+    - Risk Level: LOW
+    
+12. /home/user/dashboard/src/guardrails/ndjson_export.ts (307 lines)
+    - MEDIUM: Data exposure in exports, no access control
+    - Functions: exportSpansAsNDJSON(), exportCompliance(), createAuditReport()
+    - Risk Level: MEDIUM
+    
+13. /home/user/dashboard/src/guardrails/index.ts (95 lines)
+    - SAFE: Export aggregation
+    - Risk Level: LOW
+    
+14. /home/user/dashboard/src/guardrails/validators.ts (varies)
+    - SAFE: Span validation
+    - Risk Level: LOW
+
+
+PLUGINS & STORES
+================
+15. /home/user/dashboard/src/stores/plugins.ts (145 lines)
+    - HIGH: No origin validation, arbitrary components
+    - Functions: registerPlugin(), loadPlugins(), togglePlugin()
+    - Risk Level: HIGH
+    
+16. /home/user/dashboard/src/stores/tasks.ts (varies)
+    - MEDIUM: Data store, no input validation at API boundary
+    - Risk Level: MEDIUM
+    
+17. /home/user/dashboard/src/stores/uploads.ts (varies)
+    - MEDIUM: File storage, no validation
+    - Risk Level: MEDIUM
+    
+18. /home/user/dashboard/src/stores/llm.ts (varies)
+    - MEDIUM: Stores API keys
+    - Risk Level: MEDIUM
+    
+19. /home/user/dashboard/src/stores/dashboard.ts (varies)
+    - LOW: General state
+    - Risk Level: LOW
+    
+20. /home/user/dashboard/src/stores/auth.ts (varies)
+    - CRITICAL: Authentication
+    - Risk Level: CRITICAL
+
+
+TYPES & DEFINITIONS
+===================
+21. /home/user/dashboard/src/types/index.ts (315 lines)
+    - Type definitions, no code risk
+    - Defines: Policy, Span, Task, ErrorRecord, GuardrailViolation
+    - Risk Level: LOW
+
+
+SUPPORTING FILES
+================
+22. /home/user/dashboard/src/main.ts
+23. /home/user/dashboard/src/router/index.ts
+24. /home/user/dashboard/src/utils/task.ts
+25. /home/user/dashboard/src/utils/span.ts
+26. /home/user/dashboard/src/utils/db.ts
+27. /home/user/dashboard/src/auth/oauth.ts
+28-32. Various Vue components and utilities
+
+
+DOCUMENTATION
+==============
+CODEBASE_SECURITY_MAP.md - Comprehensive analysis
+SECURITY_QUICK_REFERENCE.md - Quick lookup guide
+GUARDRAILS_QUICK_REFERENCE.md - Existing guardrails doc
+CORE_ENGINE_SETUP.md - Architecture doc
+ARCHITECTURE_ANALYSIS.md - Existing analysis
+
+
+CRITICAL VULNERABILITIES GROUPED BY FILE
+=========================================
+
+IMMEDIATE ATTENTION (This Sprint):
+- policy_agent.ts: Lines 217-221 (with statement)
+- policy_agent.ts: Lines 263-270 (action injection)
+- webhook_receiver.ts: Lines 214-227 (no HMAC)
+- llm-agent/client.ts: Lines 54-56 (API keys)
+- run_code.ts: Lines 236-250 (regex validation)
+
+HIGH PRIORITY (Next Sprint):
+- observer_bot.ts: Lines 147-162 (unbounded LLM)
+- plugins.ts: Lines 104-121 (no source check)
+- webhook_receiver.ts: Lines 30-55 (localStorage)
+- llm-agent/client.ts: Line 234 (unsafe parsing)
+- run_code.ts: Line 131 (context not frozen)
+
+
+KEY METRICS
+===========
+Total TypeScript Files: 32
+Total Lines of Code: ~3,500
+
+Files Analyzed: 21
+CRITICAL Vulnerabilities: 4 (4+ issues each)
+HIGH Vulnerabilities: 6 (3+ issues each)  
+MEDIUM Vulnerabilities: 4 (1-2 issues each)
+
+Span Tracing Coverage: 100%
+Rate Limiting Coverage: 0%
+Origin Validation Coverage: 0%
+Request Validation Coverage: 20%
+
+
+HARDENING ROADMAP
+=================
+
+Phase 1 - CRITICAL (This branch):
+1. Remove `with` statement from policy_agent.ts
+2. Implement HMAC-SHA256 in webhook_receiver.ts
+3. Replace regex with AST validation in run_code.ts
+4. Move API keys out of browser memory
+5. Add rate limiting middleware
+
+Phase 2 - HIGH (Next sprint):
+1. Plugin origin & signature verification
+2. Permission enforcement system
+3. Request schema validation
+4. Data masking in exports
+5. Enhanced error tracking
+
+Phase 3 - MEDIUM (Long-term):
+1. WebWorker sandboxing for plugins
+2. Process-level isolation for code execution
+3. Hardware security integration
+4. Advanced threat detection
+5. Formal security audit
+
+
+ENTRY POINTS FOR ATTACK
+=======================
+
+1. Webhook Receiver → Policy Agent → Code Execution
+   Attack Surface: Forged webhooks trigger unsafe code
+
+2. User-Provided Policies → Dynamic Evaluation
+   Attack Surface: Injection attacks on conditions/actions
+
+3. Observer Bot → LLM → Task Creation
+   Attack Surface: Spam/resource exhaustion
+
+4. Plugin Loading → Component Execution
+   Attack Surface: Arbitrary code via plugins
+
+5. LLM Integration → API Key Exposure
+   Attack Surface: Credential theft

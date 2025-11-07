@@ -3,7 +3,11 @@ import type { Span } from '@/types'
 import { useTaskStore } from '@/stores/tasks'
 import { useUploadStore } from '@/stores/uploads'
 import { useLLMStore } from '@/stores/llm'
-import { validateCode as validateCodeGuardrails, createSafeContext } from '@/guardrails/code_guardrails'
+import {
+  validateCode as validateCodeGuardrails,
+  createSafeContext,
+  recordExecutionResult
+} from '@/guardrails/code_guardrails'
 
 export interface CodeExecutionResult {
   success: boolean
@@ -40,6 +44,7 @@ export async function runCode(
     params?: Record<string, any>
     timeout?: number
     spanId?: string
+    tenantId?: string
   } = {}
 ): Promise<CodeExecutionResult> {
   const span = createSpan({
@@ -47,18 +52,21 @@ export async function runCode(
     attributes: {
       codeLength: code.length,
       hasInput: !!options.input,
-      parentSpanId: options.spanId
+      parentSpanId: options.spanId,
+      tenantId: options.tenantId || 'default'
     }
   })
 
   const startTime = Date.now()
+  const tenantId = options.tenantId || 'default'
 
   try {
-    // Validate code using guardrails
+    // Validate code using ENHANCED guardrails (token-based + quota + circuit breaker)
     const validation = validateCodeGuardrails(code, {
       origin: 'run_code.execute',
       traceId: span.getSpan().traceId,
-      spanId: span.getSpan().id
+      spanId: span.getSpan().id,
+      tenantId
     })
 
     if (!validation.valid) {
@@ -69,6 +77,9 @@ export async function runCode(
 
       span.setAttribute('guardrail_violations', validation.violations.length)
       await span.end('error', `Code validation failed: ${validation.errors[0]}`)
+
+      // Record failure for circuit breaker
+      recordExecutionResult(tenantId, false)
 
       return {
         success: false,
@@ -127,7 +138,7 @@ export async function runCode(
     span.setAttribute('guardrails_enabled', true)
     span.setAttribute('code_validated', true)
 
-    // Create safe execution context (limited scope)
+    // Create safe execution context with Proxy isolation
     const safeCtx = createSafeContext(context)
 
     // Create function from code (removed 'with' statement for security)
@@ -159,6 +170,9 @@ export async function runCode(
     span.setAttribute('logs', logs)
     await span.end('ok')
 
+    // Record success for circuit breaker
+    recordExecutionResult(tenantId, true)
+
     return {
       success: true,
       result,
@@ -174,6 +188,9 @@ export async function runCode(
     })
 
     await span.end('error', error instanceof Error ? error.message : String(error))
+
+    // Record failure for circuit breaker
+    recordExecutionResult(tenantId, false)
 
     return {
       success: false,

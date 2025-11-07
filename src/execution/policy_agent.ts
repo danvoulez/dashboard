@@ -3,6 +3,7 @@ import { createSpan } from '@/utils/span'
 import { getPolicies, savePolicies } from '@/utils/db'
 import { useTaskStore } from '@/stores/tasks'
 import { v4 as uuidv4 } from 'uuid'
+import { getPolicySandbox } from '@/security/policy_sandbox'
 
 export interface PolicyContext {
   event: any
@@ -12,10 +13,11 @@ export interface PolicyContext {
 }
 
 /**
- * Policy Agent - Executes automation policies
+ * Policy Agent - Executes automation policies with secure sandbox
  */
 export class PolicyAgent {
   private policies: Policy[] = []
+  private sandbox = getPolicySandbox()
 
   constructor() {
     this.loadPolicies()
@@ -153,7 +155,7 @@ export class PolicyAgent {
   }
 
   /**
-   * Execute single policy
+   * Execute single policy with deduplication and rate limiting
    */
   private async executePolicy(
     policy: Policy,
@@ -171,8 +173,12 @@ export class PolicyAgent {
     })
 
     try {
+      // Compute event hash for deduplication
+      const eventHash = await this.sandbox.computeEventHash(context.event)
+      policySpan.setAttribute('eventHash', eventHash.substring(0, 16))
+
       // Evaluate condition
-      const conditionMet = this.evaluateCondition(policy.condition, context)
+      const conditionMet = await this.evaluateCondition(policy.condition, context)
 
       policySpan.setAttribute('conditionMet', conditionMet)
 
@@ -181,8 +187,20 @@ export class PolicyAgent {
         return false
       }
 
-      // Execute action
-      await this.executeAction(policy.action, context, policySpan)
+      // Execute action with sandbox
+      const executionResult = await this.executeAction(
+        policy.action,
+        context,
+        policySpan,
+        policy.id,
+        eventHash
+      )
+
+      if (!executionResult.success) {
+        throw new Error(executionResult.error || 'Action execution failed')
+      }
+
+      policySpan.setAttribute('executionTime', executionResult.executionTime)
 
       // Update policy execution history
       policy.spanIds.push(policySpan.getSpan().id)
@@ -202,25 +220,20 @@ export class PolicyAgent {
   }
 
   /**
-   * Evaluate policy condition
+   * Evaluate policy condition using secure sandbox (NO 'with' statement)
    */
-  private evaluateCondition(condition: string, context: PolicyContext): boolean {
+  private async evaluateCondition(condition: string, context: PolicyContext): Promise<boolean> {
     try {
-      // Create safe evaluation context
-      const safeContext = {
-        event: context.event,
-        trigger: context.trigger,
-        timestamp: context.timestamp
+      const result = await this.sandbox.evaluateCondition(condition, context, {
+        timeout: 3000 // 3 second timeout for conditions
+      })
+
+      if (!result.success) {
+        console.error('Condition evaluation failed:', result.error)
+        return false
       }
 
-      // Use Function constructor for safe evaluation
-      const evalFunction = new Function('context', `
-        with (context) {
-          return ${condition}
-        }
-      `)
-
-      return Boolean(evalFunction(safeContext))
+      return result.result || false
     } catch (error) {
       console.error('Condition evaluation error:', error)
       return false
@@ -228,29 +241,35 @@ export class PolicyAgent {
   }
 
   /**
-   * Execute policy action
+   * Execute policy action using secure sandbox (NO 'with' statement)
    */
   private async executeAction(
     action: string,
     context: PolicyContext,
-    span: any
-  ): Promise<void> {
+    span: any,
+    policyId: string,
+    eventHash: string
+  ): Promise<{ success: boolean; error?: string; executionTime: number }> {
     // Create execution context with available functions
     const taskStore = useTaskStore()
 
-    const executionContext = {
-      event: context.event,
-      context: context,
+    const allowedFunctions = {
       createTask: async (opts: any) => {
+        span.addEvent('action.createTask', { title: opts.title })
         return await taskStore.createTask(opts.title, {
           description: opts.description,
-          tags: opts.tags,
-          origin: 'webhook',
+          tags: opts.tags || [],
+          origin: 'policy',
           deadline: opts.deadline,
-          spanId: span.getSpan().id
+          spanId: span.getSpan().id,
+          metadata: {
+            policyId,
+            eventHash: eventHash.substring(0, 16)
+          }
         })
       },
       updateTask: async (id: string, updates: any) => {
+        span.addEvent('action.updateTask', { taskId: id })
         return await taskStore.updateTask(id, updates)
       },
       log: (message: string) => {
@@ -259,22 +278,37 @@ export class PolicyAgent {
     }
 
     try {
-      // Execute action code
-      const actionFunction = new Function('ctx', `
-        with (ctx) {
-          return (async () => {
-            ${action}
-          })()
+      const result = await this.sandbox.executeAction(
+        action,
+        context,
+        allowedFunctions,
+        {
+          timeout: 5000, // 5 second timeout
+          policyId,
+          eventHash
         }
-      `)
+      )
 
-      await actionFunction(executionContext)
-      span.addEvent('action_executed')
+      if (result.success) {
+        span.addEvent('action_executed', {
+          executionTime: result.executionTime
+        })
+      } else {
+        span.addEvent('action_failed', {
+          error: result.error,
+          executionTime: result.executionTime
+        })
+      }
+
+      return result
     } catch (error) {
-      span.addEvent('action_error', {
-        error: error instanceof Error ? error.message : String(error)
-      })
-      throw error
+      const errorMsg = error instanceof Error ? error.message : String(error)
+      span.addEvent('action_error', { error: errorMsg })
+      return {
+        success: false,
+        error: errorMsg,
+        executionTime: 0
+      }
     }
   }
 
@@ -300,9 +334,18 @@ export class PolicyAgent {
   }
 
   /**
-   * Test policy against sample event
+   * Test policy against sample event (dry-run mode)
    */
-  async testPolicy(policy: Policy, sampleEvent: any): Promise<{ conditionMet: boolean; error?: string }> {
+  async testPolicy(
+    policy: Policy,
+    sampleEvent: any,
+    options: { dryRun?: boolean } = {}
+  ): Promise<{
+    conditionMet: boolean
+    error?: string
+    executionTime?: number
+    actionResult?: any
+  }> {
     const context: PolicyContext = {
       event: sampleEvent,
       trigger: policy.trigger,
@@ -310,14 +353,67 @@ export class PolicyAgent {
     }
 
     try {
-      const conditionMet = this.evaluateCondition(policy.condition, context)
-      return { conditionMet }
+      // Test condition
+      const conditionResult = await this.sandbox.evaluateCondition(
+        policy.condition,
+        context,
+        { dryRun: options.dryRun }
+      )
+
+      if (!conditionResult.success) {
+        return {
+          conditionMet: false,
+          error: conditionResult.error,
+          executionTime: conditionResult.executionTime
+        }
+      }
+
+      const result: any = {
+        conditionMet: conditionResult.result || false,
+        executionTime: conditionResult.executionTime
+      }
+
+      // If condition met and dry-run, test action too
+      if (conditionResult.result && options.dryRun) {
+        const actionResult = await this.sandbox.executeAction(
+          policy.action,
+          context,
+          {
+            createTask: async () => ({ id: 'dry-run-task' }),
+            updateTask: async () => ({}),
+            log: () => {}
+          },
+          { dryRun: true }
+        )
+
+        result.actionResult = {
+          success: actionResult.success,
+          error: actionResult.error,
+          executionTime: actionResult.executionTime
+        }
+      }
+
+      return result
     } catch (error) {
       return {
         conditionMet: false,
         error: error instanceof Error ? error.message : String(error)
       }
     }
+  }
+
+  /**
+   * Get policy execution statistics
+   */
+  getPolicyStats(policyId?: string) {
+    return this.sandbox.getStats(policyId)
+  }
+
+  /**
+   * Reset rate limits for a policy (admin function)
+   */
+  resetPolicyRateLimits() {
+    this.sandbox.resetRateLimits()
   }
 }
 
