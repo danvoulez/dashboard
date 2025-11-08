@@ -21,6 +21,14 @@
   --error: #ef4444;
   --info: #3b82f6;
 
+  /* Background colors for badges and states */
+  --accent-bg: rgba(59, 130, 246, 0.1);
+  --success-bg: rgba(16, 185, 129, 0.1);
+  --warning-bg: rgba(245, 158, 11, 0.1);
+  --error-bg: rgba(239, 68, 68, 0.1);
+  --info-bg: rgba(59, 130, 246, 0.1);
+  --bg-hover: rgba(0, 0, 0, 0.05);
+
   /* Shadows */
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
@@ -56,6 +64,14 @@
   --border-color: #404040;
   --accent-primary: #3b82f6;
   --accent-secondary: #2563eb;
+
+  /* Background colors for badges and states (dark mode) */
+  --accent-bg: rgba(59, 130, 246, 0.15);
+  --success-bg: rgba(16, 185, 129, 0.15);
+  --warning-bg: rgba(245, 158, 11, 0.15);
+  --error-bg: rgba(239, 68, 68, 0.15);
+  --info-bg: rgba(59, 130, 246, 0.15);
+  --bg-hover: rgba(255, 255, 255, 0.05);
 }
 
 body {

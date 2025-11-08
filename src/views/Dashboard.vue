@@ -1,505 +1,641 @@
 <template>
-  <div class="dashboard">
-    <!-- Sidebar -->
-    <aside class="sidebar" :class="{ collapsed: dashboardStore.sidebarCollapsed }">
-      <div class="sidebar-header">
-        <h2 v-if="!dashboardStore.sidebarCollapsed">Radar</h2>
-        <button @click="dashboardStore.toggleSidebar()" class="btn-icon">
-          {{ dashboardStore.sidebarCollapsed ? '→' : '←' }}
-        </button>
-      </div>
+  <div class="modern-dashboard">
+    <!-- Modern Sidebar -->
+    <ModernSidebar />
 
-      <nav class="sidebar-nav">
-        <router-link to="/" class="nav-item">
-          <span class="nav-icon">📊</span>
-          <span v-if="!dashboardStore.sidebarCollapsed" class="nav-label">Dashboard</span>
-        </router-link>
+    <!-- Main Content Area -->
+    <div class="dashboard-main">
+      <!-- Tab Bar -->
+      <TabBar
+        :tabs="tabs"
+        :active-tab="activeTab"
+        @update:active-tab="activeTab = $event"
+        @close-tab="closeTab"
+        @add-tab="showTabSelector = true"
+      />
 
-        <router-link to="/tasks" class="nav-item">
-          <span class="nav-icon">✓</span>
-          <span v-if="!dashboardStore.sidebarCollapsed" class="nav-label">Tasks</span>
-          <span v-if="!dashboardStore.sidebarCollapsed && taskStore.pendingTasks.length > 0" class="badge badge-primary">
-            {{ taskStore.pendingTasks.length }}
-          </span>
-        </router-link>
+      <!-- Dashboard Content -->
+      <div class="dashboard-content">
+        <!-- Overview Tab -->
+        <div v-if="activeTab === 'overview'" class="tab-content">
+          <!-- Metrics Row -->
+          <div class="metrics-grid">
+            <MetricCard
+              icon="✅"
+              label="Tasks Completed"
+              :value="taskStore.completedTasks.length"
+              :change="12"
+              period="vs yesterday"
+              badge="Today"
+              badge-type="success"
+            />
+            <MetricCard
+              icon="⚡"
+              label="In Progress"
+              :value="taskStore.inProgressTasks.length"
+              badge="Active"
+              badge-type="info"
+              variant="compact"
+            />
+            <MetricCard
+              icon="🎯"
+              label="Urgent Tasks"
+              :value="taskStore.urgentTasks.length"
+              :change="-5"
+              badge="High Priority"
+              badge-type="error"
+            />
+            <MetricCard
+              icon="📊"
+              label="Total Tasks"
+              :value="taskStore.tasks.length"
+              :change="8"
+              period="vs last week"
+            />
+          </div>
 
-        <router-link to="/timeline" class="nav-item">
-          <span class="nav-icon">⏱</span>
-          <span v-if="!dashboardStore.sidebarCollapsed" class="nav-label">Timeline</span>
-        </router-link>
+          <!-- Charts Row -->
+          <div class="charts-row">
+            <LineChart
+              title="Task Completion Trend"
+              icon="📈"
+              :labels="['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']"
+              :series-data="[
+                { label: 'Completed', data: [5, 8, 6, 10, 12, 7, 9], color: '#10b981' },
+                { label: 'Created', data: [7, 6, 9, 8, 10, 11, 8], color: '#3b82f6' }
+              ]"
+              :width="700"
+              :height="300"
+            />
+            <DonutChart
+              title="Tasks by Status"
+              icon="📊"
+              :data="tasksByStatus"
+              :size="250"
+            />
+          </div>
 
-        <router-link to="/plugins" class="nav-item">
-          <span class="nav-icon">🔌</span>
-          <span v-if="!dashboardStore.sidebarCollapsed" class="nav-label">Plugins</span>
-        </router-link>
+          <!-- Widgets Row -->
+          <div class="widgets-row">
+            <ActivityFeed
+              title="Recent Activity"
+              :items="recentActivity"
+              @item-click="handleActivityClick"
+            />
+            <ProgressWidget
+              icon="🎯"
+              title="Daily Goal"
+              subtitle="Complete 10 tasks today"
+              :current="dashboardStore.dailyProgress.tasksCompleted"
+              :total="10"
+              color="#10b981"
+              remaining="2 hours left"
+            />
+          </div>
 
-        <router-link to="/settings" class="nav-item">
-          <span class="nav-icon">⚙</span>
-          <span v-if="!dashboardStore.sidebarCollapsed" class="nav-label">Settings</span>
-        </router-link>
-      </nav>
-
-      <div class="sidebar-footer">
-        <button @click="dashboardStore.toggleDarkMode()" class="btn-icon">
-          {{ dashboardStore.darkMode ? '☀️' : '🌙' }}
-        </button>
-        <button v-if="!dashboardStore.sidebarCollapsed" @click="handleLogout" class="btn-secondary btn-sm">
-          Logout
-        </button>
-      </div>
-    </aside>
-
-    <!-- Main Content -->
-    <main class="main-content">
-      <!-- Status Bar -->
-      <div class="status-bar">
-        <div class="status-item">
-          <span class="status-label">Focus Time:</span>
-          <span class="status-value">{{ formatTime(dashboardStore.focusTime) }}</span>
+          <!-- Stats and Lists Row -->
+          <div class="stats-lists-row">
+            <QuickStats
+              title="Quick Stats"
+              :stats="quickStats"
+            />
+            <CompactList
+              title="Urgent Tasks"
+              icon="🔥"
+              :items="urgentTasksList"
+              @item-click="handleTaskClick"
+              @item-action="handleTaskAction"
+            />
+          </div>
         </div>
-        <div class="status-item">
-          <span class="status-label">Last Sync:</span>
-          <span class="status-value">{{ formatLastSync() }}</span>
+
+        <!-- Analytics Tab -->
+        <div v-if="activeTab === 'analytics'" class="tab-content">
+          <div class="analytics-header">
+            <h2>📊 Analytics Dashboard</h2>
+            <div class="analytics-filters">
+              <select class="filter-select">
+                <option>Last 7 days</option>
+                <option>Last 30 days</option>
+                <option>Last 90 days</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="metrics-grid">
+            <MetricCard
+              icon="⏱"
+              label="Focus Time"
+              :value="formatTime(dashboardStore.focusTime)"
+              :change="15"
+              variant="compact"
+            />
+            <MetricCard
+              icon="📅"
+              label="Avg. Tasks/Day"
+              :value="8.5"
+              :change="10"
+              variant="compact"
+            />
+            <MetricCard
+              icon="✨"
+              label="Completion Rate"
+              value="87%"
+              :change="5"
+              badge-type="success"
+              variant="compact"
+            />
+            <MetricCard
+              icon="🔥"
+              label="Current Streak"
+              :value="7"
+              badge="Days"
+              badge-type="warning"
+              variant="compact"
+            />
+          </div>
+
+          <div class="full-width-chart">
+            <LineChart
+              title="Productivity Over Time"
+              icon="📈"
+              :labels="['Week 1', 'Week 2', 'Week 3', 'Week 4']"
+              :series-data="[
+                { label: 'Tasks Completed', data: [45, 52, 48, 61], color: '#10b981' },
+                { label: 'Focus Hours', data: [32, 38, 35, 42], color: '#3b82f6' },
+                { label: 'Goals Met', data: [5, 6, 5, 7], color: '#f59e0b' }
+              ]"
+              :width="1200"
+              :height="350"
+            />
+          </div>
         </div>
-        <div class="status-item">
-          <span class="status-label">Progress:</span>
-          <span class="status-value">{{ dashboardStore.dailyProgress.tasksCompleted }} tasks</span>
+
+        <!-- Data Table Tab -->
+        <div v-if="activeTab === 'tasks'" class="tab-content">
+          <DataTable
+            title="All Tasks"
+            icon="📋"
+            :columns="taskColumns"
+            :data="taskStore.tasks"
+            :actions="true"
+            @row-click="handleTaskClick"
+            @edit="handleEditTask"
+            @delete="handleDeleteTask"
+            @refresh="refreshTasks"
+            @export="exportTasks"
+          >
+            <template #cell-status="{ value }">
+              <span class="status-badge" :class="`status-${value}`">
+                {{ value }}
+              </span>
+            </template>
+            <template #cell-priority="{ value }">
+              <span class="priority-badge" :class="`priority-${value}`">
+                {{ value }}
+              </span>
+            </template>
+          </DataTable>
         </div>
-      </div>
 
-      <!-- Content Area -->
-      <div class="content-area">
-        <div class="content-main">
-          <!-- Dashboard Summary -->
-          <div class="dashboard-summary">
-            <h1>Dashboard</h1>
-
-            <div class="summary-cards">
-              <div class="card summary-card">
-                <h3>Urgent Tasks</h3>
-                <div class="summary-value">{{ taskStore.urgentTasks.length }}</div>
-                <p class="text-secondary text-sm">Require immediate attention</p>
-              </div>
-
-              <div class="card summary-card">
-                <h3>In Progress</h3>
-                <div class="summary-value">{{ taskStore.inProgressTasks.length }}</div>
-                <p class="text-secondary text-sm">Currently working on</p>
-              </div>
-
-              <div class="card summary-card">
-                <h3>Completed Today</h3>
-                <div class="summary-value">{{ dashboardStore.dailyProgress.tasksCompleted }}</div>
-                <p class="text-secondary text-sm">Tasks done today</p>
-              </div>
-
-              <div class="card summary-card">
-                <h3>Total Pending</h3>
-                <div class="summary-value">{{ taskStore.pendingTasks.length }}</div>
-                <p class="text-secondary text-sm">Waiting to be started</p>
+        <!-- Widgets Tab -->
+        <div v-if="activeTab === 'widgets'" class="tab-content">
+          <div class="widgets-showcase">
+            <div class="showcase-section">
+              <h3>Progress Widgets</h3>
+              <div class="widgets-grid">
+                <ProgressWidget
+                  icon="📚"
+                  title="Learning Progress"
+                  subtitle="JavaScript Course"
+                  :current="7"
+                  :total="12"
+                  color="#3b82f6"
+                />
+                <ProgressWidget
+                  icon="💪"
+                  title="Fitness Goals"
+                  subtitle="Weekly workout target"
+                  :current="4"
+                  :total="5"
+                  color="#10b981"
+                />
               </div>
             </div>
 
-            <!-- Urgent Tasks List -->
-            <div class="card">
-              <h2>Urgent Tasks</h2>
-              <div v-if="taskStore.urgentTasks.length === 0" class="empty-state">
-                <p class="text-secondary">No urgent tasks at the moment</p>
-              </div>
-              <div v-else class="task-list">
-                <div
-                  v-for="task in taskStore.urgentTasks.slice(0, 5)"
-                  :key="task.id"
-                  class="task-item"
-                >
-                  <div class="task-info">
-                    <h4>{{ task.title }}</h4>
-                    <div class="task-meta">
-                      <span class="badge" :class="`badge-${getStatusColor(task.status)}`">
-                        {{ task.status }}
-                      </span>
-                      <span class="text-xs text-secondary">Priority: {{ task.priority }}</span>
-                      <span v-if="task.deadline" class="text-xs text-secondary">
-                        Due: {{ formatDate(task.deadline) }}
-                      </span>
-                    </div>
-                  </div>
-                  <button @click="startTaskFocus(task.id)" class="btn-primary btn-sm">
-                    Focus
-                  </button>
-                </div>
+            <div class="showcase-section">
+              <h3>Activity Feeds</h3>
+              <ActivityFeed
+                title="System Notifications"
+                :items="systemActivity"
+              />
+            </div>
+
+            <div class="showcase-section">
+              <h3>Quick Stats Grid</h3>
+              <QuickStats
+                title="Performance Metrics"
+                :stats="performanceStats"
+              />
+            </div>
+
+            <div class="showcase-section">
+              <h3>Compact Lists</h3>
+              <div class="lists-grid">
+                <CompactList
+                  title="Recent Files"
+                  icon="📄"
+                  :items="recentFiles"
+                />
+                <CompactList
+                  title="Notifications"
+                  icon="🔔"
+                  :items="notifications"
+                />
               </div>
             </div>
           </div>
         </div>
-
-      </div>
-    </main>
-
-    <!-- New Task Panel with Urgency System -->
-    <TaskPanel />
-
-    <!-- Add Task Modal (simplified) -->
-    <div v-if="showAddTask" class="modal-overlay" @click.self="showAddTask = false">
-      <div class="modal card">
-        <h2>Add New Task</h2>
-        <form @submit.prevent="handleAddTask">
-          <input
-            v-model="newTaskTitle"
-            type="text"
-            placeholder="Task title"
-            class="input mb-md"
-            required
-          />
-          <div class="flex gap-md">
-            <button type="submit" class="btn-primary">Create</button>
-            <button type="button" @click="showAddTask = false" class="btn-secondary">Cancel</button>
-          </div>
-        </form>
       </div>
     </div>
+
+    <!-- Task Panel (Right Side) -->
+    <TaskPanel />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed } from 'vue'
 import { useDashboardStore } from '@/stores/dashboard'
 import { useTaskStore } from '@/stores/tasks'
-import { useAuthStore } from '@/stores/auth'
-import { formatDistanceToNow } from 'date-fns'
+import ModernSidebar from '@/components/ModernSidebar.vue'
+import TabBar, { type Tab } from '@/components/TabBar.vue'
+import MetricCard from '@/components/MetricCard.vue'
+import DataTable, { type TableColumn } from '@/components/DataTable.vue'
+import LineChart from '@/components/LineChart.vue'
+import DonutChart from '@/components/DonutChart.vue'
+import ActivityFeed, { type ActivityItem } from '@/components/ActivityFeed.vue'
+import ProgressWidget from '@/components/ProgressWidget.vue'
+import QuickStats, { type Stat } from '@/components/QuickStats.vue'
+import CompactList, { type ListItem } from '@/components/CompactList.vue'
 import TaskPanel from '@/components/TaskPanel.vue'
 
-const router = useRouter()
 const dashboardStore = useDashboardStore()
 const taskStore = useTaskStore()
-const authStore = useAuthStore()
 
-const showAddTask = ref(false)
-const newTaskTitle = ref('')
+const showTabSelector = ref(false)
+const activeTab = ref('overview')
 
-let focusInterval: number | null = null
+const tabs = ref<Tab[]>([
+  { id: 'overview', label: 'Overview', icon: '📊' },
+  { id: 'analytics', label: 'Analytics', icon: '📈' },
+  { id: 'tasks', label: 'Tasks', icon: '📋' },
+  { id: 'widgets', label: 'Widgets', icon: '🧩', closable: true }
+])
 
-onMounted(() => {
-  // Update focus time every second
-  focusInterval = window.setInterval(() => {
-    if (dashboardStore.activeFocus) {
-      // Force reactivity update
-      dashboardStore.activeFocus = { ...dashboardStore.activeFocus }
-    }
-  }, 1000)
-})
-
-onUnmounted(() => {
-  if (focusInterval) {
-    clearInterval(focusInterval)
+const closeTab = (tabId: string) => {
+  tabs.value = tabs.value.filter(t => t.id !== tabId)
+  if (activeTab.value === tabId) {
+    activeTab.value = tabs.value[0]?.id || 'overview'
   }
-})
+}
 
+// Task columns for DataTable
+const taskColumns: TableColumn[] = [
+  { key: 'title', label: 'Title' },
+  { key: 'status', label: 'Status' },
+  { key: 'priority', label: 'Priority' },
+  { key: 'deadline', label: 'Deadline', format: (val) => val ? new Date(val).toLocaleDateString() : '-' }
+]
+
+// Tasks by status for DonutChart
+const tasksByStatus = computed(() => [
+  { label: 'Completed', value: taskStore.completedTasks.length, color: '#10b981' },
+  { label: 'In Progress', value: taskStore.inProgressTasks.length, color: '#3b82f6' },
+  { label: 'Pending', value: taskStore.pendingTasks.length, color: '#f59e0b' },
+  { label: 'Urgent', value: taskStore.urgentTasks.length, color: '#ef4444' }
+])
+
+// Recent activity for ActivityFeed
+const recentActivity = computed<ActivityItem[]>(() => [
+  {
+    icon: '✅',
+    title: 'Task Completed',
+    description: 'Finished "Update documentation"',
+    time: '2 minutes ago',
+    color: '#10b981'
+  },
+  {
+    icon: '📝',
+    title: 'Task Created',
+    description: 'New task "Review pull request"',
+    time: '15 minutes ago',
+    color: '#3b82f6'
+  },
+  {
+    icon: '⚡',
+    title: 'Focus Session Started',
+    description: 'Working on "Fix bug #123"',
+    time: '1 hour ago',
+    color: '#f59e0b'
+  },
+  {
+    icon: '🔔',
+    title: 'Reminder',
+    description: 'Team meeting in 30 minutes',
+    time: '2 hours ago',
+    color: '#8b5cf6'
+  }
+])
+
+// Quick stats
+const quickStats: Stat[] = [
+  { icon: '🎯', value: '95%', label: 'On Track', color: '#10b981' },
+  { icon: '⚡', value: '24', label: 'This Week', color: '#3b82f6' },
+  { icon: '🔥', value: '7', label: 'Streak', color: '#f59e0b' },
+  { icon: '⭐', value: 'A+', label: 'Grade', color: '#8b5cf6' }
+]
+
+// Urgent tasks list
+const urgentTasksList = computed<ListItem[]>(() =>
+  taskStore.urgentTasks.slice(0, 5).map(task => ({
+    icon: '🔥',
+    title: task.title,
+    subtitle: task.deadline ? `Due ${new Date(task.deadline).toLocaleDateString()}` : undefined,
+    badge: String(task.priority),
+    badgeType: String(task.priority) === 'urgent' ? 'error' : 'warning',
+    value: String(task.status)
+  }))
+)
+
+// System activity
+const systemActivity: ActivityItem[] = [
+  { icon: '💾', title: 'Auto-save', description: 'All changes saved', time: 'Just now', color: '#10b981' },
+  { icon: '🔄', title: 'Sync completed', description: '5 tasks synchronized', time: '5 min ago', color: '#3b82f6' },
+  { icon: '🎉', title: 'Milestone reached', description: '50 tasks completed!', time: '1 hour ago', color: '#f59e0b' }
+]
+
+// Performance stats
+const performanceStats: Stat[] = [
+  { icon: '💼', value: '156', label: 'Total Tasks', color: '#3b82f6' },
+  { icon: '✅', value: '142', label: 'Completed', color: '#10b981' },
+  { icon: '⏱', value: '48h', label: 'Focus Time', color: '#f59e0b' },
+  { icon: '📊', value: '91%', label: 'Success Rate', color: '#8b5cf6' }
+]
+
+// Recent files
+const recentFiles: ListItem[] = [
+  { icon: '📄', title: 'project-plan.pdf', subtitle: 'Modified today', value: '2.4 MB' },
+  { icon: '📊', title: 'analytics.xlsx', subtitle: 'Modified yesterday', value: '1.8 MB' },
+  { icon: '🖼', title: 'design-mockup.fig', subtitle: '2 days ago', value: '5.2 MB' }
+]
+
+// Notifications
+const notifications: ListItem[] = [
+  { icon: '💬', title: 'New comment', subtitle: 'John replied to your task', badge: 'New', badgeType: 'info' },
+  { icon: '👥', title: 'Team invite', subtitle: 'Join "Marketing Team"', badge: 'Action', badgeType: 'warning' },
+  { icon: '⚠️', title: 'Deadline approaching', subtitle: 'Task due in 2 hours', badge: 'Urgent', badgeType: 'error' }
+]
+
+// Helper functions
 function formatTime(seconds: number): string {
   const hours = Math.floor(seconds / 3600)
   const minutes = Math.floor((seconds % 3600) / 60)
-  const secs = seconds % 60
-
-  if (hours > 0) {
-    return `${hours}h ${minutes}m`
-  } else if (minutes > 0) {
-    return `${minutes}m ${secs}s`
-  } else {
-    return `${secs}s`
-  }
+  if (hours > 0) return `${hours}h ${minutes}m`
+  return `${minutes}m`
 }
 
-function formatLastSync(): string {
-  if (!taskStore.lastSync) return 'Never'
-  return formatDistanceToNow(new Date(taskStore.lastSync), { addSuffix: true })
+function handleActivityClick(item: ActivityItem) {
+  console.log('Activity clicked:', item)
 }
 
-function formatDate(dateString: string): string {
-  return formatDistanceToNow(new Date(dateString), { addSuffix: true })
+function handleTaskClick(task: any) {
+  console.log('Task clicked:', task)
 }
 
-function getStatusColor(status: string): string {
-  switch (status) {
-    case 'pending': return 'warning'
-    case 'in_progress': return 'info'
-    case 'done': return 'success'
-    default: return 'secondary'
-  }
+function handleTaskAction(task: any) {
+  console.log('Task action:', task)
 }
 
-async function startTaskFocus(taskId: string) {
-  await dashboardStore.startFocus(taskId)
+function handleEditTask(task: any) {
+  console.log('Edit task:', task)
 }
 
-async function handleAddTask() {
-  if (!newTaskTitle.value.trim()) return
-
-  await taskStore.createTask(newTaskTitle.value)
-  newTaskTitle.value = ''
-  showAddTask.value = false
+function handleDeleteTask(task: any) {
+  console.log('Delete task:', task)
 }
 
-async function handleLogout() {
-  await authStore.logout()
-  router.push('/login')
+function refreshTasks() {
+  // Refresh tasks from the store
+  console.log('Refreshing tasks...')
+}
+
+function exportTasks() {
+  console.log('Export tasks')
 }
 </script>
 
 <style scoped>
-.dashboard {
+.modern-dashboard {
   display: flex;
   height: 100vh;
+  background: var(--bg-primary);
+  margin-left: 240px; /* Space for sidebar */
+}
+
+.dashboard-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  margin-right: 360px; /* Space for TaskPanel */
   overflow: hidden;
 }
 
-/* Sidebar */
-.sidebar {
-  width: 250px;
-  background-color: var(--bg-secondary);
-  border-right: 1px solid var(--border-color);
+.dashboard-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  background: var(--bg-secondary);
+}
+
+.tab-content {
   display: flex;
   flex-direction: column;
-  transition: width var(--transition-base);
+  gap: 20px;
+  max-width: 1600px;
+  margin: 0 auto;
 }
 
-.sidebar.collapsed {
-  width: 60px;
+/* Metrics Grid */
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 16px;
 }
 
-.sidebar-header {
+/* Charts Row */
+.charts-row {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr;
+  gap: 16px;
+}
+
+/* Widgets Row */
+.widgets-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+/* Stats and Lists Row */
+.stats-lists-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+/* Analytics */
+.analytics-header {
   display: flex;
-  align-items: center;
   justify-content: space-between;
-  padding: var(--spacing-lg);
-  border-bottom: 1px solid var(--border-color);
-}
-
-.sidebar-nav {
-  flex: 1;
-  padding: var(--spacing-md);
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-sm);
-}
-
-.nav-item {
-  display: flex;
   align-items: center;
-  gap: var(--spacing-md);
-  padding: var(--spacing-sm) var(--spacing-md);
-  border-radius: var(--radius-md);
+  margin-bottom: 20px;
+}
+
+.analytics-header h2 {
+  font-size: 24px;
+  font-weight: 700;
   color: var(--text-primary);
-  text-decoration: none;
-  transition: background-color var(--transition-base);
 }
 
-.nav-item:hover {
-  background-color: var(--bg-tertiary);
-}
-
-.nav-item.router-link-active {
-  background-color: var(--accent-primary);
-  color: white;
-}
-
-.nav-icon {
-  font-size: 1.25rem;
-}
-
-.sidebar-footer {
-  padding: var(--spacing-md);
-  border-top: 1px solid var(--border-color);
+.analytics-filters {
   display: flex;
-  gap: var(--spacing-sm);
+  gap: 12px;
 }
 
-/* Main Content */
-.main-content {
-  flex: 1;
+.filter-select {
+  padding: 8px 16px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.full-width-chart {
+  width: 100%;
+}
+
+/* Widgets Showcase */
+.widgets-showcase {
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  gap: 32px;
 }
 
-.status-bar {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-lg);
-  padding: var(--spacing-md) var(--spacing-lg);
-  background-color: var(--bg-secondary);
-  border-bottom: 1px solid var(--border-color);
+.showcase-section h3 {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 16px;
 }
 
-.status-item {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  font-size: 0.875rem;
+.widgets-grid,
+.lists-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+  gap: 16px;
 }
 
-.status-label {
+/* Status and Priority Badges */
+.status-badge,
+.priority-badge {
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.status-pending {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+.status-in_progress {
+  background: var(--info-bg);
+  color: var(--info);
+}
+
+.status-completed {
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.priority-urgent {
+  background: var(--error-bg);
+  color: var(--error);
+}
+
+.priority-high {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+.priority-medium {
+  background: var(--info-bg);
+  color: var(--info);
+}
+
+.priority-low {
+  background: var(--bg-tertiary);
   color: var(--text-secondary);
 }
 
-.status-value {
-  font-weight: 500;
-  color: var(--text-primary);
+/* Scrollbar */
+.dashboard-content::-webkit-scrollbar {
+  width: 8px;
 }
 
-.content-area {
-  display: flex;
-  flex: 1;
-  overflow: hidden;
+.dashboard-content::-webkit-scrollbar-track {
+  background: var(--bg-primary);
 }
 
-.content-main {
-  flex: 1;
-  overflow-y: auto;
-  padding: var(--spacing-lg);
-  margin-right: 360px; /* Make space for TaskPanel */
+.dashboard-content::-webkit-scrollbar-thumb {
+  background: var(--bg-tertiary);
+  border-radius: 4px;
 }
 
-/* Dashboard Summary */
-.dashboard-summary {
-  max-width: 1200px;
+.dashboard-content::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary);
 }
 
-.summary-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: var(--spacing-lg);
-  margin-bottom: var(--spacing-xl);
+/* Responsive */
+@media (max-width: 1400px) {
+  .charts-row {
+    grid-template-columns: 1fr;
+  }
 }
 
-.summary-card {
-  text-align: center;
+@media (max-width: 1024px) {
+  .widgets-row,
+  .stats-lists-row {
+    grid-template-columns: 1fr;
+  }
+
+  .modern-dashboard {
+    margin-left: 64px; /* Collapsed sidebar */
+  }
 }
 
-.summary-value {
-  font-size: 2.5rem;
-  font-weight: 700;
-  color: var(--accent-primary);
-  margin: var(--spacing-md) 0;
-}
-
-/* Task Panel is now in TaskPanel.vue component */
-
-/* Task List */
-.task-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-md);
-}
-
-.task-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--spacing-md);
-  padding: var(--spacing-md);
-  border-radius: var(--radius-md);
-  background-color: var(--bg-secondary);
-  transition: background-color var(--transition-base);
-}
-
-.task-item:hover {
-  background-color: var(--bg-tertiary);
-}
-
-.task-item.compact {
-  padding: var(--spacing-sm);
-}
-
-.task-info {
-  flex: 1;
-  min-width: 0;
-}
-
-.task-info h4 {
-  margin-bottom: var(--spacing-xs);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.task-meta {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  flex-wrap: wrap;
-}
-
-.task-tags {
-  display: flex;
-  gap: var(--spacing-xs);
-  flex-wrap: wrap;
-  margin-top: var(--spacing-xs);
-}
-
-.priority-indicator {
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: var(--accent-primary);
-}
-
-/* Modal */
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-
-.modal {
-  max-width: 500px;
-  width: 90%;
-}
-
-/* Utilities */
-.btn-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: none;
-  border-radius: var(--radius-md);
-  background-color: transparent;
-  color: var(--text-primary);
-  cursor: pointer;
-  transition: background-color var(--transition-base);
-}
-
-.btn-icon:hover {
-  background-color: var(--bg-tertiary);
-}
-
-.empty-state {
-  text-align: center;
-  padding: var(--spacing-xl);
-}
-
-/* Mobile responsive */
 @media (max-width: 768px) {
-  .sidebar {
-    position: fixed;
-    z-index: 100;
-    height: 100vh;
-  }
-
-  .task-panel {
-    display: none;
-  }
-
-  .summary-cards {
+  .metrics-grid {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .dashboard-main {
+    margin-right: 0; /* Hide TaskPanel on mobile */
   }
 }
 </style>
